@@ -16,7 +16,9 @@ const {
   mockQueueAdd,
   mockReserveWorkspaceDMSend,
   mockReleaseWorkspaceDMReservation,
+  mockHideComment,
 } = vi.hoisted(() => ({
+  mockHideComment: vi.fn(),
   mockPrisma: {
     zernioConnection: { findUnique: vi.fn() },
     postbackDelivery: { create: vi.fn(), delete: vi.fn() },
@@ -41,6 +43,7 @@ const {
         accessToken: "encrypted_token_abc",
         provider: "META",
         workspaceId: "workspace_123",
+        hideCommentWords: [] as string[],
       })),
     },
     operationalEvent: {
@@ -94,6 +97,7 @@ vi.mock("@/lib/meta/client", () => ({
   sendDirectMessage: mockSendDirectMessage,
   sendDirectMessageWithLinkButton: mockSendDirectMessageWithLinkButton,
   sendCommentReply: vi.fn(),
+  hideComment: mockHideComment,
   MetaApiError: class MetaApiError extends Error {
     code: number;
     constructor(
@@ -620,6 +624,25 @@ describe("DM Worker — Full Pipeline", () => {
       "Hi commenter_user! Reply and I'll send the cards"
     );
     expect(setPendingModule).toHaveBeenCalledWith("ig_456", "commenter_999", "auto_789");
+  });
+
+  it("hides a comment with a blocked word and does not answer it", async () => {
+    mockPrisma.instagramAccount.findFirst.mockResolvedValueOnce({
+      id: "ig_account_row_1",
+      instagramId: "ig_456",
+      accessToken: "encrypted_token_abc",
+      provider: "META",
+      workspaceId: "workspace_123",
+      hideCommentWords: ["crypto"],
+    });
+    mockMatchKeywords.mockReturnValueOnce({ matched: true, matchedKeyword: "crypto" });
+    mockHideComment.mockResolvedValueOnce({ success: true });
+    const processor = getProcessor();
+    await processor(createMockJob());
+
+    expect(mockHideComment).toHaveBeenCalledWith("decrypted_token", "comment_555");
+    expect(mockPrisma.automation.findMany).not.toHaveBeenCalled();
+    expect(mockSendPrivateReply).not.toHaveBeenCalled();
   });
 
   it("should deliver tracked links as web_url buttons (one or two)", async () => {

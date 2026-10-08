@@ -32,6 +32,7 @@ export async function GET() {
       name: true,
       humanPauseMinutes: true,
       persistentMenu: true,
+      hideCommentWords: true,
     },
   });
 
@@ -49,8 +50,14 @@ const settingsSchema = z
     // 0 turns the pause off; at most a day.
     humanPauseMinutes: z.number().int().min(0).max(1440).optional(),
     persistentMenu: menuSchema.optional(),
+    hideCommentWords: z.array(z.string().trim().min(1).max(50)).max(100).optional(),
   })
-  .refine((d) => d.humanPauseMinutes !== undefined || d.persistentMenu !== undefined);
+  .refine(
+    (d) =>
+      d.humanPauseMinutes !== undefined ||
+      d.persistentMenu !== undefined ||
+      d.hideCommentWords !== undefined
+  );
 
 /** PATCH ?id=: per-account automation settings. */
 export async function PATCH(request: NextRequest) {
@@ -84,6 +91,9 @@ export async function PATCH(request: NextRequest) {
     data: {
       ...(parsed.data.humanPauseMinutes !== undefined ? { humanPauseMinutes: parsed.data.humanPauseMinutes } : {}),
       ...(parsed.data.persistentMenu !== undefined ? { persistentMenu: parsed.data.persistentMenu } : {}),
+      ...(parsed.data.hideCommentWords !== undefined
+        ? { hideCommentWords: [...new Set(parsed.data.hideCommentWords)] }
+        : {}),
     },
   });
   if (updated.count === 0) {

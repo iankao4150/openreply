@@ -27,6 +27,7 @@ interface SettingsData {
       accessExpiresAt?: string | null;
       humanPauseMinutes?: number;
       persistentMenu?: { title: string; url: string | null; moduleId: string | null }[];
+      hideCommentWords?: string[];
       webhookSubscribed: boolean;
     }
   >;
@@ -58,6 +59,22 @@ export default function SettingsPage() {
   // Captured once per visit: the expiry warning only needs day precision.
   const [now] = useState(() => Date.now());
   const [pauseSaved, setPauseSaved] = useState<string | null>(null);
+  const [wordsSaved, setWordsSaved] = useState<string | null>(null);
+
+  async function saveHiddenWords(accountId: string, text: string) {
+    const words = text
+      .split(/[,，、\n]/)
+      .map((word) => word.trim())
+      .filter(Boolean)
+      .slice(0, 100);
+    const res = await fetch(`/api/instagram/accounts?id=${accountId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ hideCommentWords: words }),
+    });
+    const data = await res.json().catch(() => null);
+    if (data?.success) setWordsSaved(accountId);
+  }
 
   async function saveHumanPause(accountId: string, minutes: number) {
     const res = await fetch(`/api/instagram/accounts?id=${accountId}`, {
@@ -248,6 +265,22 @@ export default function SettingsPage() {
                   )}
                   {account.provider !== "ZERNIO" && (
                     <PersistentMenuEditor accountId={account.id} initial={account.persistentMenu ?? []} />
+                  )}
+                  {account.provider !== "ZERNIO" && (
+                    <label className="mt-3 block rounded border border-border p-3">
+                      <span className="block text-xs font-medium text-foreground">{t("Hide comments containing")}</span>
+                      <span className="mb-2 block text-xs text-muted">
+                        {t("Comments with any of these words are hidden automatically and get no reply (spam, scam links). Separate with commas.")}
+                      </span>
+                      <textarea
+                        defaultValue={(account.hideCommentWords ?? []).join(", ")}
+                        rows={2}
+                        onBlur={(e) => void saveHiddenWords(account.id, e.target.value)}
+                        placeholder={t("e.g. free followers, crypto, t.me/")}
+                        className="w-full rounded border border-border bg-surface px-2 py-1.5 text-xs text-foreground placeholder:text-zinc-500 focus:border-accent/40 focus:outline-none"
+                      />
+                      {wordsSaved === account.id && <span className="text-xs text-success">{t("Changes saved")}</span>}
+                    </label>
                   )}
                   {account.provider !== "ZERNIO" && (
                     <p className="mt-2 text-xs text-muted">

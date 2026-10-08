@@ -147,6 +147,8 @@ model InstagramAccount {
   humanPauseMinutes Int      @default(30)
   // Persistent menu in the DM composer: [{title, url?, moduleId?}], max 5.
   persistentMenu    Json     @default("[]")
+  // Comments containing any of these are hidden automatically (spam, scams).
+  hideCommentWords  String[] @default([])
   webhookSubscribed Boolean  @default(false)
   connectedAt       DateTime @default(now())
   updatedAt         DateTime @updatedAt

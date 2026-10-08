@@ -334,3 +334,16 @@ export async function sendDirectMessageWithQuickReplies({
     quickReplies
   );
 }
+
+/** Hide a comment. Zernio connections cannot, so this reports false there. */
+export async function hideComment({
+  context,
+  commentId,
+}: {
+  context: InstagramContext;
+  commentId: string;
+}): Promise<boolean> {
+  if (context.provider !== "META") return false;
+  const result = await meta.hideComment(context.accessToken, commentId);
+  return Boolean(result.success);
+}

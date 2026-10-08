@@ -40,6 +40,7 @@ import {
   RateLimitError,
   TokenExpiredError,
   getUserFollowStatus,
+  hideComment,
   sendCommentReply,
   sendDirectMessage,
   sendDirectMessageWithButton,
@@ -330,6 +331,44 @@ function connectionScope(data: DmQueueJob) {
   return data.accountConnectionId ? { instagramAccountId: data.accountConnectionId } : {};
 }
 
+/**
+ * Hide a comment that contains one of the account's blocked words (spam,
+ * scams) and report true, so it gets no reply. A failure to hide is recorded
+ * and the comment is still not answered.
+ */
+async function hideIfBlocked(data: ProcessCommentJob): Promise<boolean> {
+  const account = await prisma.instagramAccount.findFirst({
+    where: {
+      instagramId: data.instagramAccountId,
+      ...(data.accountConnectionId ? { id: data.accountConnectionId } : {}),
+    },
+  });
+  const words = account?.hideCommentWords ?? [];
+  if (!account || words.length === 0 || !hasInstagramCredentials(account)) return false;
+  const match = matchKeywords(data.commentText, words, false);
+  if (!match.matched) return false;
+
+  let outcome = "hidden";
+  try {
+    const context = await createInstagramContext(account, `hide:${data.commentId}`);
+    await hideComment({ context, commentId: data.commentId });
+  } catch (error) {
+    outcome = `not hidden: ${formatError(error)}`;
+  }
+  await prisma.operationalEvent
+    .create({
+      data: {
+        workspaceId: account.workspaceId,
+        source: "SYSTEM",
+        level: outcome === "hidden" ? "INFO" : "WARNING",
+        message: `Comment with a blocked word (${match.matchedKeyword}) ${outcome}`,
+        payload: { commentId: data.commentId, mediaId: data.mediaId },
+      },
+    })
+    .catch(() => {});
+  return true;
+}
+
 async function processComment(job: Job<ProcessCommentJob>): Promise<void> {
   const {
     instagramAccountId,
@@ -341,6 +380,8 @@ async function processComment(job: Job<ProcessCommentJob>): Promise<void> {
     originalMediaId,
   } = job.data;
   const requeueAttempt = job.data.requeueAttempt ?? 0;
+
+  if (await hideIfBlocked(job.data)) return;
 
   const automations = await prisma.automation.findMany({
     where: {

@@ -535,6 +535,17 @@ export async function sendCommentReply(
   return handleResponse(response);
 }
 
+/** Hide a comment from everyone but its author (instagram_manage_comments). */
+export async function hideComment(accessToken: string, commentId: string): Promise<{ success?: boolean }> {
+  const url = new URL(`${instagramGraphBase()}/${commentId}`);
+  url.searchParams.set("hide", "true");
+  const response = await fetch(url.toString(), {
+    method: "POST",
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  return handleResponse(response);
+}
+
 export async function getMediaComments(
   accessToken: string,
   mediaId: string
