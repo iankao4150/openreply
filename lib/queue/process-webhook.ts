@@ -260,16 +260,29 @@ export async function processInstagramWebhook({ payload: incoming, provider, wor
 
     // Contacts: who commented, and who messaged (which opens the 24-hour window).
     const touches: ContactTouch[] = [];
-    const touch = (instagramId: string, userId: string, kind: ContactTouch['kind'], username?: string) => {
+    const touch = (
+      instagramId: string,
+      userId: string,
+      kind: ContactTouch['kind'],
+      username?: string,
+      timestamp?: number
+    ) => {
       const account = accountMap.get(instagramId);
       if (!account || !userId || userId === instagramId) return;
-      touches.push({ workspaceId: account.workspaceId, instagramAccountId: account.id, userId, username, kind });
+      touches.push({
+        workspaceId: account.workspaceId,
+        instagramAccountId: account.id,
+        userId,
+        username,
+        kind,
+        ...(timestamp ? { at: new Date(timestamp) } : {}),
+      });
     };
     for (const e of commentEvents) touch(e.instagramAccountId, e.commenterId, 'comment', e.commenterName);
-    for (const e of postbackEvents) touch(e.instagramAccountId, e.userId, 'inbound');
-    for (const e of quickReplyEvents) touch(e.instagramAccountId, e.userId, 'inbound');
-    for (const e of storyMentionEvents) touch(e.instagramAccountId, e.userId, 'inbound');
-    for (const e of messageEvents) touch(e.instagramAccountId, e.senderId, 'inbound');
+    for (const e of postbackEvents) touch(e.instagramAccountId, e.userId, 'inbound', undefined, e.timestamp);
+    for (const e of quickReplyEvents) touch(e.instagramAccountId, e.userId, 'inbound', undefined, e.timestamp);
+    for (const e of storyMentionEvents) touch(e.instagramAccountId, e.userId, 'inbound', undefined, e.timestamp);
+    for (const e of messageEvents) touch(e.instagramAccountId, e.senderId, 'inbound', undefined, e.timestamp);
     await recordContacts(touches);
 
     await prisma.webhookEvent.update({

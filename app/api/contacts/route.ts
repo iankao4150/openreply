@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
-import type { Prisma } from "@/app/generated/prisma/client";
+import { Prisma } from "@/app/generated/prisma/client";
 import { prisma } from "@/lib/db/client";
 import { MESSAGING_WINDOW_MS, normalizeTags, TAG_MAX_LENGTH } from "@/lib/contacts/record";
 import { canManageWorkspace, getCurrentWorkspaceContext } from "@/lib/workspace-access";
@@ -84,15 +84,16 @@ export async function GET(request: NextRequest) {
     prisma.contact.count({
       where: { workspaceId: context.workspaceId, ...accountFilter, lastInboundAt: { gt: new Date(now - MESSAGING_WINDOW_MS) } },
     }),
-    prisma.contact.findMany({
-      where: { workspaceId: context.workspaceId, ...accountFilter, NOT: { tags: { isEmpty: true } } },
-      select: { tags: true },
-      take: 20_000,
-    }),
+    // Counted in the database: one row per tag, however many contacts.
+    prisma.$queryRaw<{ tag: string; count: number }[]>`
+      SELECT tag, count(*)::int AS count
+      FROM "Contact", unnest("tags") AS tag
+      WHERE "workspaceId" = ${context.workspaceId}
+      ${params.get("accountId") ? Prisma.sql`AND "instagramAccountId" = ${params.get("accountId")}` : Prisma.empty}
+      GROUP BY tag
+      ORDER BY count DESC, tag ASC
+      LIMIT 200`,
   ]);
-
-  const tagCounts = new Map<string, number>();
-  for (const row of tagRows) for (const tag of row.tags) tagCounts.set(tag, (tagCounts.get(tag) ?? 0) + 1);
 
   const page = contacts.slice(0, PAGE_SIZE);
   return NextResponse.json({
@@ -115,7 +116,7 @@ export async function GET(request: NextRequest) {
       nextCursor: contacts.length > PAGE_SIZE ? page[page.length - 1].id : null,
       total,
       openWindow,
-      tags: [...tagCounts.entries()].sort((a, b) => b[1] - a[1]).map(([tag, count]) => ({ tag, count })),
+      tags: tagRows,
     },
   });
 }

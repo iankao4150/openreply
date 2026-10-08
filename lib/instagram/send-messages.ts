@@ -6,7 +6,7 @@ import {
   ZernioDeliveryUnconfirmedError,
 } from "@/lib/zernio/client";
 import type { InstagramContext, ZernioContext } from "./context";
-import { markAutomatedSend, rememberSentMid } from "@/lib/ops/human-pause";
+import { clearAutomatedMark, markAutomatedSend, rememberSentMid } from "@/lib/ops/human-pause";
 
 type Button =
   | { type: "url"; title: string; url: string }
@@ -352,7 +352,7 @@ export async function hideComment({
 /**
  * Who a message comes from. Automated sends are remembered (by message id) so
  * their echoes are not mistaken for a person replying by hand; the inbox sends
- * as "human", and its echo pauses the automation like any manual reply.
+ * as "human". `userId` on a private reply is the commenter, for the mark.
  */
 export type SendOrigin = "automation" | "human";
 
@@ -361,45 +361,51 @@ async function track<T>(
   send: () => Promise<T>
 ): Promise<T> {
   if (args.origin === "human") return send();
-  if (args.userId) await markAutomatedSend(args.instagramAccountId, args.userId);
+  // Covers an echo that beats the response; cleared once the id is known, so
+  // a person replying moments later is still recognised. A failed send keeps
+  // the mark (it may have arrived) until it expires.
+  const mark = args.userId ? await markAutomatedSend(args.instagramAccountId, args.userId) : null;
   const result = await send();
   const mid = (result as { message_id?: unknown } | null)?.message_id;
-  if (typeof mid === "string" && mid) await rememberSentMid(mid);
+  if (typeof mid === "string" && mid) {
+    await rememberSentMid(mid);
+    if (mark && args.userId) await clearAutomatedMark(args.instagramAccountId, args.userId, mark);
+  }
   return result;
 }
 
-export async function sendPrivateReply(args: Parameters<typeof sendPrivateReplyUntracked>[0] & { origin?: SendOrigin }) {
+export async function sendPrivateReply(args: Parameters<typeof sendPrivateReplyUntracked>[0] & { origin?: SendOrigin; userId?: string }) {
   return track(args, () => sendPrivateReplyUntracked(args));
 }
 
-export async function sendPrivateReplyWithButton(args: Parameters<typeof sendPrivateReplyWithButtonUntracked>[0] & { origin?: SendOrigin }) {
+export async function sendPrivateReplyWithButton(args: Parameters<typeof sendPrivateReplyWithButtonUntracked>[0] & { origin?: SendOrigin; userId?: string }) {
   return track(args, () => sendPrivateReplyWithButtonUntracked(args));
 }
 
-export async function sendDirectMessageWithButton(args: Parameters<typeof sendDirectMessageWithButtonUntracked>[0] & { origin?: SendOrigin }) {
+export async function sendDirectMessageWithButton(args: Parameters<typeof sendDirectMessageWithButtonUntracked>[0] & { origin?: SendOrigin; userId?: string }) {
   return track(args, () => sendDirectMessageWithButtonUntracked(args));
 }
 
-export async function sendPrivateReplyWithLinkButton(args: Parameters<typeof sendPrivateReplyWithLinkButtonUntracked>[0] & { origin?: SendOrigin }) {
+export async function sendPrivateReplyWithLinkButton(args: Parameters<typeof sendPrivateReplyWithLinkButtonUntracked>[0] & { origin?: SendOrigin; userId?: string }) {
   return track(args, () => sendPrivateReplyWithLinkButtonUntracked(args));
 }
 
-export async function sendDirectMessage(args: Parameters<typeof sendDirectMessageUntracked>[0] & { origin?: SendOrigin }) {
+export async function sendDirectMessage(args: Parameters<typeof sendDirectMessageUntracked>[0] & { origin?: SendOrigin; userId?: string }) {
   return track(args, () => sendDirectMessageUntracked(args));
 }
 
-export async function sendDirectMessageWithLinkButton(args: Parameters<typeof sendDirectMessageWithLinkButtonUntracked>[0] & { origin?: SendOrigin }) {
+export async function sendDirectMessageWithLinkButton(args: Parameters<typeof sendDirectMessageWithLinkButtonUntracked>[0] & { origin?: SendOrigin; userId?: string }) {
   return track(args, () => sendDirectMessageWithLinkButtonUntracked(args));
 }
 
-export async function sendPrivateReplyWithCards(args: Parameters<typeof sendPrivateReplyWithCardsUntracked>[0] & { origin?: SendOrigin }) {
+export async function sendPrivateReplyWithCards(args: Parameters<typeof sendPrivateReplyWithCardsUntracked>[0] & { origin?: SendOrigin; userId?: string }) {
   return track(args, () => sendPrivateReplyWithCardsUntracked(args));
 }
 
-export async function sendDirectMessageWithCards(args: Parameters<typeof sendDirectMessageWithCardsUntracked>[0] & { origin?: SendOrigin }) {
+export async function sendDirectMessageWithCards(args: Parameters<typeof sendDirectMessageWithCardsUntracked>[0] & { origin?: SendOrigin; userId?: string }) {
   return track(args, () => sendDirectMessageWithCardsUntracked(args));
 }
 
-export async function sendDirectMessageWithQuickReplies(args: Parameters<typeof sendDirectMessageWithQuickRepliesUntracked>[0] & { origin?: SendOrigin }) {
+export async function sendDirectMessageWithQuickReplies(args: Parameters<typeof sendDirectMessageWithQuickRepliesUntracked>[0] & { origin?: SendOrigin; userId?: string }) {
   return track(args, () => sendDirectMessageWithQuickRepliesUntracked(args));
 }

@@ -535,6 +535,7 @@
   "This invitation has expired. Ask the workspace owner to resend it.": "Este convite expirou. Peça ao proprietário do espaço de trabalho para reenviá-lo.",
   "This is the public demo — it doesn’t create real accounts or send DMs. To use OpenReply for real, clone it and run your own instance with your own Meta app and domain.": "Esta é a demonstração pública — ela não cria contas reais nem envia DMs. Para usar o OpenReply de verdade, clone o projeto e rode sua própria instância com seu próprio app da Meta e domínio.",
   "This module is still used by a campaign or DM rule. Switch them to another reply first.": "Este módulo ainda é usado por uma campanha ou regra de DM. Troque a resposta delas primeiro.",
+  "This post has too many comments to read in one go ({count} read), so no draw was made to keep it fair.": "Este post tem comentários demais para ler de uma vez ({count} lidos); para ser justo, o sorteio não foi feito.",
   "Thu": "Qui",
   "Time": "Horário",
   "Time zone": "Fuso horário",

@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { getRedisConnection } from "@/lib/queue/client";
 
 /**
@@ -8,8 +9,9 @@ import { getRedisConnection } from "@/lib/queue/client";
  * quiet for the account's humanPauseMinutes.
  *
  * Meta can deliver the echo before the send call returns its id, so every
- * automated send also marks the conversation for a few seconds beforehand.
- * Late or re-delivered echoes are recognised by id, however late they come.
+ * automated send also marks the conversation while it is in flight (cleared
+ * once the id is known, 30 s at most). Late or re-delivered echoes are
+ * recognised by id, however late they come.
  */
 const AUTOMATED_MARK_SECONDS = 30;
 const SENT_MID_SECONDS = 2 * 24 * 60 * 60;
@@ -21,16 +23,31 @@ const automatedKey = (accountId: string, userId: string) =>
 const humanKey = (accountId: string, userId: string) =>
   `openreply:human:${accountId}:${userId}`;
 
-export async function markAutomatedSend(instagramAccountId: string, userId: string) {
+/** Mark a send in flight. Returns the mark's token, to clear it afterwards. */
+export async function markAutomatedSend(instagramAccountId: string, userId: string): Promise<string | null> {
+  const token = randomUUID();
   try {
     await getRedisConnection().set(
       automatedKey(instagramAccountId, userId),
-      "1",
+      token,
       "EX",
       AUTOMATED_MARK_SECONDS
     );
+    return token;
   } catch (error) {
     console.warn("[Human pause] Could not mark an automated send:", String(error));
+    return null;
+  }
+}
+
+// Delete the mark only if it is still ours (another send may have replaced it).
+const CLEAR_IF_OURS = `if redis.call("get", KEYS[1]) == ARGV[1] then return redis.call("del", KEYS[1]) else return 0 end`;
+
+export async function clearAutomatedMark(instagramAccountId: string, userId: string, token: string) {
+  try {
+    await getRedisConnection().eval(CLEAR_IF_OURS, 1, automatedKey(instagramAccountId, userId), token);
+  } catch {
+    // It expires on its own.
   }
 }
 

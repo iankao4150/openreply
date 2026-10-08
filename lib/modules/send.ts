@@ -117,6 +117,7 @@ export async function sendModuleAsPrivateReply({
   if (cards.length > 0) {
     try {
       await sendPrivateReplyWithCards({
+        userId: commenterId,
         context,
         instagramAccountId,
         commentId,
@@ -135,6 +136,7 @@ export async function sendModuleAsPrivateReply({
     if (first) {
       try {
         await sendPrivateReplyWithLinkButton({
+          userId: commenterId,
           context,
           instagramAccountId,
           commentId,
@@ -150,6 +152,7 @@ export async function sendModuleAsPrivateReply({
   }
 
   await sendPrivateReply({
+    userId: commenterId,
     context,
     instagramAccountId,
     commentId,

@@ -3,6 +3,7 @@ import { z } from "zod";
 import { prisma } from "@/lib/db/client";
 import { BROADCAST_JOB_NAME, getDMQueue } from "@/lib/queue/client";
 import { getWorkspaceInstagramAccount } from "@/lib/instagram-accounts";
+import { normalizeTags } from "@/lib/contacts/record";
 import { broadcastAudienceWhere, MAX_BROADCAST_RECIPIENTS } from "@/lib/broadcasts/send";
 import { canManageWorkspace, getCurrentWorkspaceContext } from "@/lib/workspace-access";
 
@@ -50,7 +51,7 @@ export async function POST(request: NextRequest) {
 
   const parsed = createSchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) return fail("Invalid input", 400);
-  const input = parsed.data;
+  const input = { ...parsed.data, tags: normalizeTags(parsed.data.tags) };
 
   const account = await getWorkspaceInstagramAccount(context.workspaceId, input.instagramAccountId ?? null);
   if (!account) return fail("Instagram account not connected.", 400);
@@ -105,13 +106,19 @@ export async function POST(request: NextRequest) {
       skipDuplicates: true,
     });
     return created;
-  });
+  }, { timeout: 30_000 });
 
-  await getDMQueue().add(
-    BROADCAST_JOB_NAME,
-    { broadcastId: broadcast.id, instagramAccountId: account.instagramId },
-    { jobId: `broadcast_${broadcast.id}_start` }
-  );
+  try {
+    await getDMQueue().add(
+      BROADCAST_JOB_NAME,
+      { broadcastId: broadcast.id, instagramAccountId: account.instagramId },
+      { jobId: `broadcast_${broadcast.id}_start` }
+    );
+  } catch {
+    // Nothing was sent; leave no half-started broadcast behind.
+    await prisma.broadcast.delete({ where: { id: broadcast.id } }).catch(() => {});
+    return fail("Could not start the broadcast. Try again in a minute.", 503);
+  }
 
   return NextResponse.json({ success: true, data: { ...broadcast, capped } }, { status: 201 });
 }

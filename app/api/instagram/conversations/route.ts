@@ -7,6 +7,7 @@ import {
   MetaApiError,
 } from "@/lib/instagram/provider";
 import { createInstagramContext } from "@/lib/instagram/provider";
+import { pauseForHuman } from "@/lib/ops/human-pause";
 
 export interface ConversationListItem {
   id: string;
@@ -149,9 +150,12 @@ export async function POST(request: NextRequest) {
       instagramAccountId: account.instagramId,
       userId: body.recipientId,
       message: text,
-      // A person wrote this: its echo pauses the automation for this chat.
+      // A person wrote this: never remembered as an automated send.
       origin: "human",
     });
+    // Pause automated replies to this person right away. The echo would do it
+    // too, but Zernio connections deliver no echoes.
+    await pauseForHuman(account.instagramId, body.recipientId, account.humanPauseMinutes);
     return NextResponse.json({ success: true, data: result });
   } catch (err) {
     console.error("[Conversations] Send error:", err);

@@ -6,7 +6,12 @@ import { isOptedOut } from "@/lib/ops/opt-out";
 import { isHumanHandling } from "@/lib/ops/human-pause";
 import { sendModuleAsDirectMessage } from "@/lib/modules/send";
 import { classifySendError, isConfirmedSendRejection } from "@/lib/instagram/delivery-errors";
-import { createInstagramContext, hasInstagramCredentials } from "@/lib/instagram/provider";
+import {
+  createInstagramContext,
+  hasInstagramCredentials,
+  RateLimitError,
+  TokenExpiredError,
+} from "@/lib/instagram/provider";
 import { releaseWorkspaceDMReservation, reserveWorkspaceDMSend } from "@/lib/billing/usage";
 
 /**
@@ -19,6 +24,10 @@ export const BROADCAST_BATCH = 25;
 export const MAX_BROADCAST_RECIPIENTS = 5_000;
 const WINDOW_MARGIN_MS = 10 * 60 * 1000;
 const PAUSE_BETWEEN_SENDS_MS = Number(process.env.BROADCAST_PAUSE_MS ?? 300);
+// Meta's rate limit is per hour; try the rest again after a pause.
+const RATE_LIMIT_RETRY_MS = 15 * 60 * 1000;
+// A broadcast with people waiting but no progress for this long has lost its job.
+const STALLED_AFTER_MS = 10 * 60 * 1000;
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -104,9 +113,11 @@ export async function processBroadcast(job: Job<ProcessBroadcastJob>): Promise<v
     await prisma.broadcast.update({ where: { id: broadcast.id }, data: { status: "DONE", finishedAt: new Date() } });
     return;
   }
-  if (broadcast.status === "QUEUED") {
-    await prisma.broadcast.update({ where: { id: broadcast.id }, data: { status: "SENDING", startedAt: new Date() } });
-  }
+  // Conditional, so a cancel pressed a moment ago is not overwritten.
+  await prisma.broadcast.updateMany({
+    where: { id: broadcast.id, status: "QUEUED" },
+    data: { status: "SENDING", startedAt: new Date() },
+  });
 
   const context = await createInstagramContext(account, `broadcast:${broadcast.id}`);
   const batch = await prisma.broadcastRecipient.findMany({
@@ -115,6 +126,7 @@ export async function processBroadcast(job: Job<ProcessBroadcastJob>): Promise<v
     take: BROADCAST_BATCH,
   });
 
+  let retryAt: number | null = null;
   for (const recipient of batch) {
     // Cancelled from the dashboard: stop between sends.
     const current = await prisma.broadcast.findUnique({ where: { id: broadcast.id }, select: { status: true } });
@@ -172,6 +184,19 @@ export async function processBroadcast(job: Job<ProcessBroadcastJob>): Promise<v
       if (isConfirmedSendRejection(error)) {
         await releaseWorkspaceDMReservation(broadcast.workspaceId, usage.periodStart);
       }
+      // The account, not this person, was refused: put them back and stop.
+      if (error instanceof RateLimitError) {
+        await prisma.broadcastRecipient.update({ where: { id: recipient.id }, data: { status: "PENDING" } });
+        retryAt = Date.now() + RATE_LIMIT_RETRY_MS;
+        break;
+      }
+      if (error instanceof TokenExpiredError) {
+        await prisma.broadcastRecipient.updateMany({
+          where: { broadcastId: broadcast.id, status: { in: ["PENDING", "SENDING"] } },
+          data: { status: "SKIPPED", error: "The Instagram connection expired. Reconnect it in Settings." },
+        });
+        break;
+      }
       // Never retried: a refused send stays refused within the window, and an
       // uncertain one may already be in their inbox.
       await prisma.broadcastRecipient.update({
@@ -192,9 +217,57 @@ export async function processBroadcast(job: Job<ProcessBroadcastJob>): Promise<v
     await getDMQueue().add(
       BROADCAST_JOB_NAME,
       { broadcastId: broadcast.id, instagramAccountId: account.instagramId },
-      { jobId: `broadcast_${broadcast.id}_${Date.now()}` }
+      {
+        jobId: `broadcast_${broadcast.id}_${Date.now()}`,
+        ...(retryAt ? { delay: retryAt - Date.now() } : {}),
+      }
     );
     return;
   }
-  await prisma.broadcast.update({ where: { id: broadcast.id }, data: { status: "DONE", finishedAt: new Date() } });
+  await prisma.broadcast.updateMany({
+    where: { id: broadcast.id, status: { in: ["QUEUED", "SENDING"] } },
+    data: { status: "DONE", finishedAt: new Date() },
+  });
+}
+
+/**
+ * Re-queue broadcasts whose job was lost (Redis trouble, retries used up):
+ * people still waiting and nothing sent for a while. Recipients are claimed one
+ * by one, so a second job for a broadcast that is in fact still running sends
+ * nobody twice.
+ */
+export async function resumeStalledBroadcasts(now = Date.now()): Promise<number> {
+  const open = await prisma.broadcast.findMany({
+    where: { status: { in: ["QUEUED", "SENDING"] }, createdAt: { lt: new Date(now - STALLED_AFTER_MS) } },
+    select: { id: true, instagramAccount: { select: { instagramId: true } } },
+    take: 50,
+  });
+  let resumed = 0;
+  for (const broadcast of open) {
+    const [waiting, lastSent] = await Promise.all([
+      prisma.broadcastRecipient.count({ where: { broadcastId: broadcast.id, status: "PENDING" } }),
+      prisma.broadcastRecipient.findFirst({
+        where: { broadcastId: broadcast.id, sentAt: { not: null } },
+        orderBy: { sentAt: "desc" },
+        select: { sentAt: true },
+      }),
+    ]);
+    if (waiting === 0) {
+      await finish(broadcast.id);
+      await prisma.broadcast.updateMany({
+        where: { id: broadcast.id, status: { in: ["QUEUED", "SENDING"] } },
+        data: { status: "DONE", finishedAt: new Date() },
+      });
+      continue;
+    }
+    if (lastSent?.sentAt && now - lastSent.sentAt.getTime() < STALLED_AFTER_MS) continue;
+    await getDMQueue().add(
+      BROADCAST_JOB_NAME,
+      { broadcastId: broadcast.id, instagramAccountId: broadcast.instagramAccount.instagramId },
+      // One resume per broadcast per window, however often the sweep runs.
+      { jobId: `broadcast_${broadcast.id}_resume_${Math.floor(now / STALLED_AFTER_MS)}` }
+    );
+    resumed++;
+  }
+  return resumed;
 }

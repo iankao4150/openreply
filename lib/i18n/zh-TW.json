@@ -535,6 +535,7 @@
   "This invitation has expired. Ask the workspace owner to resend it.": "此邀請已過期，請聯絡工作區擁有者重新寄送。",
   "This is the public demo — it doesn’t create real accounts or send DMs. To use OpenReply for real, clone it and run your own instance with your own Meta app and domain.": "這是公開示範網站，不會建立真實帳號或傳送私訊。若要使用 OpenReply，請自行部署，並設定自己的 Meta 應用程式與網域。",
   "This module is still used by a campaign or DM rule. Switch them to another reply first.": "這個模組還有活動或私訊規則在用，請先把它們換成別的回覆內容。",
+  "This post has too many comments to read in one go ({count} read), so no draw was made to keep it fair.": "這篇貼文留言太多，一次讀不完（已讀 {count} 則）；為了公平，這次沒有抽獎。",
   "Thu": "週四",
   "Time": "時間",
   "Time zone": "時區",

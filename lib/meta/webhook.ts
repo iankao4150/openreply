@@ -94,6 +94,8 @@ export interface WebhookMessageEvent {
   messageId: string;
   messageText: string;
   senderId: string;
+  /** When it was sent (ms since epoch), as Meta reports it. */
+  timestamp?: number;
 }
 
 export interface WebhookPostbackEvent {
@@ -242,6 +244,7 @@ export function parseMessageEvents(
         messageId,
         messageText: text,
         senderId,
+        ...(typeof messaging.timestamp === "number" ? { timestamp: messaging.timestamp } : {}),
       });
     }
   }
@@ -294,6 +297,8 @@ export interface WebhookDmActionEvent {
   userId: string;
   payload: string;
   mid: string;
+  /** When it was sent (ms since epoch), as Meta reports it. */
+  timestamp?: number;
 }
 
 /** Quick-reply taps carrying one of our DM action payloads. */
@@ -308,7 +313,7 @@ export function parseQuickReplyEvents(payload: WebhookPayload): WebhookDmActionE
       const userId = messaging.sender?.id;
       const accountId = entry.id ?? messaging.recipient?.id;
       if (!userId || !accountId || !message.mid || userId === accountId) continue;
-      events.push({ instagramAccountId: accountId, userId, payload: tapPayload, mid: message.mid });
+      events.push({ instagramAccountId: accountId, userId, payload: tapPayload, mid: message.mid, ...(typeof messaging.timestamp === "number" ? { timestamp: messaging.timestamp } : {}) });
     }
   }
   return events;
@@ -318,6 +323,8 @@ export interface WebhookStoryMentionEvent {
   instagramAccountId: string;
   userId: string;
   mid: string;
+  /** When it was sent (ms since epoch), as Meta reports it. */
+  timestamp?: number;
 }
 
 /** Someone mentioned the account in their story (a message with a story_mention attachment). */
@@ -332,7 +339,7 @@ export function parseStoryMentionEvents(payload: WebhookPayload): WebhookStoryMe
       const userId = messaging.sender?.id;
       const accountId = entry.id ?? messaging.recipient?.id;
       if (!userId || !accountId || !message.mid || userId === accountId) continue;
-      events.push({ instagramAccountId: accountId, userId, mid: message.mid });
+      events.push({ instagramAccountId: accountId, userId, mid: message.mid, ...(typeof messaging.timestamp === "number" ? { timestamp: messaging.timestamp } : {}) });
     }
   }
   return events;

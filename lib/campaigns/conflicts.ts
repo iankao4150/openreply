@@ -57,9 +57,10 @@ const isDefaultRule = (c: ConflictCandidate) => c.dmOnly && c.dmRuleType === "DE
 
 const time = (value: Date | string | null | undefined) => (value ? new Date(value).getTime() : null);
 
-/** Whether the two can be live at the same moment (schedule and business hours). */
-function liveTogether(a: ConflictCandidate, b: ConflictCandidate) {
+/** Whether the two can be live at the same moment from now on (schedule and business hours). */
+function liveTogether(a: ConflictCandidate, b: ConflictCandidate, now: number) {
   const [aStart, aEnd, bStart, bEnd] = [time(a.startsAt), time(a.endsAt), time(b.startsAt), time(b.endsAt)];
+  if ((aEnd !== null && aEnd <= now) || (bEnd !== null && bEnd <= now)) return false;
   if (aEnd !== null && bStart !== null && aEnd <= bStart) return false;
   if (bEnd !== null && aStart !== null && bEnd <= aStart) return false;
   const modes = new Set([a.hoursMode ?? "ALWAYS", b.hoursMode ?? "ALWAYS"]);
@@ -78,16 +79,20 @@ function postsOverlap(a: ConflictCandidate, b: ConflictCandidate) {
  */
 export function findConflicts(
   target: ConflictCandidate,
-  others: ConflictCandidate[]
+  others: ConflictCandidate[],
+  now = Date.now()
 ): CampaignConflict[] {
   if (!target.isActive) return [];
   const conflicts: CampaignConflict[] = [];
   for (const other of others) {
     if (other.id === target.id || !other.isActive) continue;
     if (other.instagramAccountId !== target.instagramAccountId) continue;
-    if (!liveTogether(target, other)) continue;
+    if (!liveTogether(target, other, now)) continue;
     if (isDefaultRule(target) || isDefaultRule(other)) {
-      if (isDefaultRule(target) && isDefaultRule(other)) {
+      // Two default replies, or a DM campaign answering any word: either way
+      // only one of them ever answers.
+      const rest = isDefaultRule(target) ? other : target;
+      if (isDefaultRule(rest) || (answersDms(rest) && rest.matchAnyWord)) {
         conflicts.push({ otherId: other.id, otherName: other.name, kind: "default" });
       }
       continue;

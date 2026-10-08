@@ -17,6 +17,7 @@ const h = vi.hoisted(() => {
 vi.mock("@/lib/db/client", () => ({
   prisma: {
     broadcast: {
+      findMany: vi.fn(async () => [{ id: "b1", instagramAccount: { instagramId: "biz" } }]),
       findUnique: vi.fn(async (args: { include?: unknown }) =>
         args.include
           ? {
@@ -31,13 +32,20 @@ vi.mock("@/lib/db/client", () => ({
       update: vi.fn(async ({ data }: { data: { status?: string } }) => {
         if (data.status) h.broadcastStatus.value = data.status;
       }),
+      updateMany: vi.fn(async ({ where, data }: { where: { status: string | { in: string[] } }; data: { status?: string } }) => {
+        const allowed = typeof where.status === "string" ? [where.status] : where.status.in;
+        if (!allowed.includes(h.broadcastStatus.value)) return { count: 0 };
+        if (data.status) h.broadcastStatus.value = data.status;
+        return { count: 1 };
+      }),
     },
     broadcastRecipient: {
       findMany: vi.fn(async () => h.recipients.filter((r) => r.status === "PENDING").slice(0, 25)),
-      updateMany: vi.fn(async ({ where, data }: { where: { id?: string; status: string }; data: { status: string; error?: string } }) => {
+      updateMany: vi.fn(async ({ where, data }: { where: { id?: string; status: string | { in: string[] } }; data: { status: string; error?: string } }) => {
         let count = 0;
+        const statuses = typeof where.status === "string" ? [where.status] : where.status.in;
         for (const r of h.recipients) {
-          if ((where.id ? r.id === where.id : true) && r.status === where.status) {
+          if ((where.id ? r.id === where.id : true) && statuses.includes(r.status)) {
             Object.assign(r, data);
             count++;
           }
@@ -47,6 +55,8 @@ vi.mock("@/lib/db/client", () => ({
       update: vi.fn(async ({ where, data }: { where: { id: string }; data: object }) =>
         Object.assign(h.recipients.find((r) => r.id === where.id)!, data)
       ),
+      count: vi.fn(async () => h.recipients.filter((r) => r.status === "PENDING").length),
+      findFirst: vi.fn(async () => null),
       groupBy: vi.fn(async () => {
         const counts = new Map<string, number>();
         for (const r of h.recipients) counts.set(r.status, (counts.get(r.status) ?? 0) + 1);
@@ -69,16 +79,22 @@ vi.mock("@/lib/queue/client", () => ({
 vi.mock("@/lib/ops/opt-out", () => ({ isOptedOut: vi.fn(async (_ig: string, user: string) => h.optedOut.has(user)) }));
 vi.mock("@/lib/ops/human-pause", () => ({ isHumanHandling: vi.fn(async () => false) }));
 vi.mock("@/lib/modules/send", () => ({ sendModuleAsDirectMessage: h.send }));
-vi.mock("@/lib/instagram/provider", () => ({
-  createInstagramContext: vi.fn(async () => ({ provider: "META", accessToken: "t" })),
-  hasInstagramCredentials: () => true,
-}));
+vi.mock("@/lib/instagram/provider", async () => {
+  const client = await vi.importActual<typeof import("@/lib/meta/client")>("@/lib/meta/client");
+  return {
+    RateLimitError: client.RateLimitError,
+    TokenExpiredError: client.TokenExpiredError,
+    createInstagramContext: vi.fn(async () => ({ provider: "META", accessToken: "t" })),
+    hasInstagramCredentials: () => true,
+  };
+});
 vi.mock("@/lib/billing/usage", () => ({
   reserveWorkspaceDMSend: vi.fn(async () => ({ allowed: true, periodStart: new Date() })),
   releaseWorkspaceDMReservation: vi.fn(),
 }));
 
-import { processBroadcast } from "@/lib/broadcasts/send";
+import { processBroadcast, resumeStalledBroadcasts } from "@/lib/broadcasts/send";
+import { RateLimitError, TokenExpiredError } from "@/lib/meta/client";
 
 const job = { data: { broadcastId: "b1", instagramAccountId: "biz" } } as Parameters<typeof processBroadcast>[0];
 
@@ -144,5 +160,40 @@ describe("sending a broadcast", () => {
     await processBroadcast(job);
     expect(h.send).not.toHaveBeenCalled();
     expect(h.recipients.every((r) => r.status === "SKIPPED")).toBe(true);
+  });
+
+  it("puts the person back and pauses the broadcast when Instagram rate-limits the account", async () => {
+    person("a", 1);
+    person("b", 1);
+    h.send.mockRejectedValueOnce(new RateLimitError("Too many calls"));
+    await processBroadcast(job);
+    expect(h.recipients.map((r) => r.status)).toEqual(["PENDING", "PENDING"]);
+    expect(h.add).toHaveBeenCalledWith(
+      "process-broadcast",
+      expect.anything(),
+      expect.objectContaining({ delay: expect.any(Number) })
+    );
+    expect(h.broadcastStatus.value).toBe("SENDING");
+  });
+
+  it("stops everyone when the Instagram connection has expired", async () => {
+    person("a", 1);
+    person("b", 1);
+    h.send.mockRejectedValueOnce(new TokenExpiredError("Session expired"));
+    await processBroadcast(job);
+    expect(h.send).toHaveBeenCalledTimes(1);
+    expect(h.recipients.every((r) => r.status === "SKIPPED")).toBe(true);
+    expect(h.broadcastStatus.value).toBe("DONE");
+  });
+
+  it("re-queues a broadcast whose job was lost", async () => {
+    person("a", 1);
+    h.broadcastStatus.value = "SENDING";
+    expect(await resumeStalledBroadcasts()).toBe(1);
+    expect(h.add).toHaveBeenCalledWith(
+      "process-broadcast",
+      { broadcastId: "b1", instagramAccountId: "biz" },
+      expect.objectContaining({ jobId: expect.stringContaining("broadcast_b1_resume_") })
+    );
   });
 });

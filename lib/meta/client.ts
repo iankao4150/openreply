@@ -561,6 +561,32 @@ export async function getMediaComments(
 }
 
 /**
+ * Every top-level comment on a media, for a giveaway draw. Stops at `max` or at
+ * the deadline; `complete` says whether the whole list was read, since a draw
+ * over part of the comments would leave some entrants out.
+ */
+export async function getAllMediaComments(
+  accessToken: string,
+  mediaId: string,
+  { max, deadline }: { max: number; deadline: number }
+): Promise<{ comments: InstagramComment[]; complete: boolean }> {
+  const comments: InstagramComment[] = [];
+  const first = new URL(`${instagramGraphBase()}/${mediaId}/comments`);
+  first.searchParams.set("fields", "id,text,timestamp,from");
+  first.searchParams.set("limit", "50");
+  first.searchParams.set("access_token", accessToken);
+  let nextUrl: string | null = first.toString();
+  while (nextUrl !== null) {
+    if (comments.length >= max || Date.now() > deadline) return { comments, complete: false };
+    const response: Response = await fetch(nextUrl);
+    const page = await handleResponse<{ data: InstagramComment[]; paging?: { next?: string } }>(response);
+    comments.push(...(page.data ?? []));
+    nextUrl = page.paging?.next ?? null;
+  }
+  return { comments, complete: true };
+}
+
+/**
  * Recent comments on a media, newest first, each with its replies so the caller
  * can tell whether the account owner has already responded. Pagination stops as
  * soon as it reaches comments older than `sinceMs` (or the `max` ceiling), so a

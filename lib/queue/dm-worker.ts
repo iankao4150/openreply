@@ -27,7 +27,8 @@ import { liveAt } from "@/lib/campaigns/schedule";
 import { tagContact } from "@/lib/contacts/record";
 import { processBroadcast } from "@/lib/broadcasts/send";
 import { hoursAllow } from "@/lib/ops/business-hours";
-import { isHumanHandling, markAutomatedSend } from "@/lib/ops/human-pause";
+import { claimCooldown, releaseCooldown } from "@/lib/ops/cooldown";
+import { isHumanHandling } from "@/lib/ops/human-pause";
 import {
   isOptedOut,
   OPT_IN_CONFIRMATION,
@@ -250,9 +251,7 @@ async function sendRevealDirectMessage({
   commenterName: string | null;
   context: string;
 }): Promise<void> {
-  await markAutomatedSend(automation.instagramAccount.instagramId, userId);
-
-  if (automation.messageModule) {
+    if (automation.messageModule) {
     const delivery = await sendModuleAsDirectMessage({
       context: accessToken,
       instagramAccountId: automation.instagramAccount.instagramId,
@@ -481,7 +480,8 @@ async function processComment(job: Job<ProcessCommentJob>): Promise<void> {
         },
         select: { id: true },
       });
-      if (answered) {
+      // Two comments from one person processed at once: only one answers.
+      if (answered || !(await claimCooldown(automation.id, commenterId, null, commentId))) {
         await prisma.dmLog.upsert({
           where: { automationId_commentId: { automationId: automation.id, commentId } },
           create: {
@@ -805,7 +805,6 @@ async function processComment(job: Job<ProcessCommentJob>): Promise<void> {
       await releaseWorkspaceDMReservation(automation.workspaceId, usage.periodStart);
       continue;
     }
-    await markAutomatedSend(instagramAccountId, commenterId);
     let delivered = false;
     try {
       if (useOpeningDm) {
@@ -815,6 +814,7 @@ async function processComment(job: Job<ProcessCommentJob>): Promise<void> {
           trackedLinks: [],
         });
         await sendPrivateReplyWithButton({
+          userId: commenterId,
           context: accessToken,
           instagramAccountId: automation.instagramAccount.instagramId,
           commentId: commentId,
@@ -833,6 +833,7 @@ async function processComment(job: Job<ProcessCommentJob>): Promise<void> {
           commenterName,
         });
         await sendPrivateReplyWithButton({
+          userId: commenterId,
           context: accessToken,
           instagramAccountId: automation.instagramAccount.instagramId,
           commentId: commentId,
@@ -844,6 +845,7 @@ async function processComment(job: Job<ProcessCommentJob>): Promise<void> {
       } else if (automation.messageModule && automation.commentReplyStyle === "TEXT_FIRST") {
         // Plain text reaches everyone; the cards follow once they write back.
         await sendPrivateReply({
+          userId: commenterId,
           context: accessToken,
           instagramAccountId: automation.instagramAccount.instagramId,
           commentId,
@@ -884,6 +886,7 @@ async function processComment(job: Job<ProcessCommentJob>): Promise<void> {
 
         try {
           await sendPrivateReplyWithLinkButton({
+            userId: commenterId,
             context: accessToken,
             instagramAccountId: automation.instagramAccount.instagramId,
             commentId: commentId,
@@ -910,6 +913,7 @@ async function processComment(job: Job<ProcessCommentJob>): Promise<void> {
           );
           try {
             await sendPrivateReply({
+              userId: commenterId,
               context: accessToken,
               instagramAccountId: automation.instagramAccount.instagramId,
               commentId: commentId,
@@ -928,6 +932,7 @@ async function processComment(job: Job<ProcessCommentJob>): Promise<void> {
           recipientToken: hashRecipientId(commenterId),
         });
         await sendPrivateReply({
+          userId: commenterId,
           context: accessToken,
           instagramAccountId: automation.instagramAccount.instagramId,
           commentId: commentId,
@@ -958,6 +963,7 @@ async function processComment(job: Job<ProcessCommentJob>): Promise<void> {
       if (isConfirmedSendRejection(sendError)) {
         if (rateLimit?.reserved) await releaseDMSlot(instagramAccountId);
         await releaseWorkspaceDMReservation(automation.workspaceId, usage.periodStart);
+        if (automation.oncePerUser) await releaseCooldown(automation.id, commenterId, commentId);
       }
       await prisma.dmLog.update({
         where: { automationId_commentId: { automationId: automation.id, commentId } },
@@ -1037,7 +1043,6 @@ async function sendFollowRecheckAck({
     );
     if (first !== "OK") return;
     const send = async () => {
-      await markAutomatedSend(instagramAccountId, userId);
       return sendDirectMessage({ context, instagramAccountId, userId, message });
     };
     // Its own id: the tap's id is claimed later by the link or prompt that
@@ -1100,8 +1105,10 @@ async function processPostback(job: Job<ProcessPostbackJob>): Promise<void> {
 
   if (fallback) {
     // Nobody tapped: this send is ours to decide, so someone who sent STOP
-    // (which also counts as a read) gets nothing.
+    // (which also counts as a read), or whom the team is now talking to, gets
+    // nothing.
     if (await isOptedOut(instagramAccountId, userId)) return;
+    if (await isHumanHandling(instagramAccountId, userId)) return;
     const existingReveal = await prisma.dmLog.findUnique({
       where: {
         automationId_commentId: {
@@ -1240,7 +1247,6 @@ async function processPostback(job: Job<ProcessPostbackJob>): Promise<void> {
         await sendPostbackOnce({
           operationId,
           send: async () => {
-            await markAutomatedSend(automation.instagramAccount.instagramId, userId);
             return sendDirectMessageWithButton({
               context: accessToken,
               instagramAccountId: automation.instagramAccount.instagramId,
@@ -1435,7 +1441,8 @@ async function processFollowUp(job: Job<ProcessFollowUpJob>): Promise<void> {
 
   try {
     if (await isOptedOut(instagramAccountId, userId)) return;
-    await markAutomatedSend(instagramAccountId, userId);
+    // Someone on the team took over the chat since the link went out.
+    if (await isHumanHandling(instagramAccountId, userId)) return;
     await sendDirectMessage({
       context: accessToken,
       instagramAccountId: automation.instagramAccount.instagramId,
@@ -1461,6 +1468,15 @@ async function processFollowUp(job: Job<ProcessFollowUpJob>): Promise<void> {
  * comments) and delivers the reveal directly, honouring the follow gate.
  * Dedup is per inbound message id, so each message triggers at most one reply.
  */
+/** Queue a follow-up after a reply went out; a failure here must not mark the reply failed. */
+async function scheduleFollowUpSafely(...args: Parameters<ReturnType<typeof getDMQueue>["add"]>) {
+  try {
+    await getDMQueue().add(...args);
+  } catch (error) {
+    console.warn("[DM Worker] Follow-up not scheduled:", formatError(error));
+  }
+}
+
 async function processMessage(job: Job<ProcessMessageJob>): Promise<void> {
   const { instagramAccountId, messageId, messageText, senderId } = job.data;
 
@@ -1486,7 +1502,6 @@ async function processMessage(job: Job<ProcessMessageJob>): Promise<void> {
         context = null;
       }
       if (context) {
-        await markAutomatedSend(instagramAccountId, senderId);
         try {
           await sendDirectMessage({
             context,
@@ -1504,9 +1519,10 @@ async function processMessage(job: Job<ProcessMessageJob>): Promise<void> {
   }
   if (await isOptedOut(instagramAccountId, senderId)) return;
 
-  // A "text first" comment reply promised the cards on their next message.
+  // A "text first" comment reply promised the cards on their next message —
+  // unless someone on the team has taken the conversation over meanwhile.
   const pendingAutomationId = await takePendingModule(instagramAccountId, senderId);
-  if (pendingAutomationId) {
+  if (pendingAutomationId && !(await isHumanHandling(instagramAccountId, senderId))) {
     const pending = await prisma.automation.findFirst({
       // A paused campaign keeps its promise unkept (the product may be gone).
       where: { id: pendingAutomationId, instagramAccountId: account.id, isActive: true },
@@ -1550,7 +1566,7 @@ async function processMessage(job: Job<ProcessMessageJob>): Promise<void> {
         });
         await tagContact(pending, senderId, priorLog?.commenterName ?? null);
         if (pending.followUpEnabled && pending.followUpMessage?.trim()) {
-          await getDMQueue().add(
+          await scheduleFollowUpSafely(
             FOLLOWUP_JOB_NAME,
             {
               instagramAccountId,
@@ -1658,13 +1674,14 @@ async function processMessage(job: Job<ProcessMessageJob>): Promise<void> {
     });
 
     // Already replied to this message (or deliberately skipped it) — a retry
-    // of the job must not send a second DM.
+    // or redelivery must not send a second DM, from this rule or a later one.
     if (
       existingLog?.status === "SENT" ||
       existingLog?.status === "SKIPPED_PLAN_LIMIT" ||
+      existingLog?.status === "SKIPPED_DEDUP" ||
       existingLog?.dmDeliveryUnconfirmed
     ) {
-      continue;
+      break;
     }
 
     const logBase = {
@@ -1814,7 +1831,18 @@ async function processMessage(job: Job<ProcessMessageJob>): Promise<void> {
       continue;
     }
 
-    await markAutomatedSend(instagramAccountId, senderId);
+    // Messages sent together run in parallel: only one may take the cooldown.
+    const limited = automation.oncePerUser || cooldownMinutes > 0;
+    if (limited && !(await claimCooldown(automation.id, senderId, automation.oncePerUser ? null : cooldownMinutes, dedupeId))) {
+      await releaseWorkspaceDMReservation(automation.workspaceId, usage.periodStart);
+      await prisma.dmLog.upsert({
+        where: { automationId_commentId: { automationId: automation.id, commentId: dedupeId } },
+        create: { ...logBase, status: "SKIPPED_DEDUP", errorMessage: "Answered another message from this person just now" },
+        update: {},
+      });
+      break;
+    }
+
     try {
       if (sendFollowPrompt) {
         const promptText = renderMessageWithoutLink({
@@ -1844,7 +1872,7 @@ async function processMessage(job: Job<ProcessMessageJob>): Promise<void> {
         // here exactly as it does after a button tap. Not scheduled behind the
         // follow prompt — no link went out yet in that branch.
         if (automation.followUpEnabled && automation.followUpMessage?.trim()) {
-          await getDMQueue().add(
+          await scheduleFollowUpSafely(
             FOLLOWUP_JOB_NAME,
             {
               instagramAccountId: automation.instagramAccount.instagramId,
@@ -1891,6 +1919,7 @@ async function processMessage(job: Job<ProcessMessageJob>): Promise<void> {
           automation.workspaceId,
           usage.periodStart
         );
+        if (limited) await releaseCooldown(automation.id, senderId, dedupeId);
       }
       await prisma.dmLog.upsert({
         where: {
@@ -1957,7 +1986,8 @@ async function processDmAction(job: Job<ProcessDmActionJob>): Promise<void> {
   if (kind === "story") {
     if (await isHumanHandling(instagramAccountId, userId)) return;
     if (await isOptedOut(instagramAccountId, userId)) return;
-    automation = await prisma.automation.findFirst({
+    // The oldest story rule whose business-hours setting allows a reply now.
+    const storyRules = await prisma.automation.findMany({
       where: {
         instagramAccountId: account.id,
         isActive: true,
@@ -1968,6 +1998,7 @@ async function processDmAction(job: Job<ProcessDmActionJob>): Promise<void> {
       include: automationInclude,
       orderBy: { createdAt: "asc" },
     });
+    automation = storyRules.find((rule) => hoursAllow(rule.hoursMode, account.businessHours, now)) ?? null;
   } else {
     const action = payload ? parseDmActionPayload(payload) : null;
     if (!action) return;
@@ -2003,6 +2034,8 @@ async function processDmAction(job: Job<ProcessDmActionJob>): Promise<void> {
   if (!automation && !tappedModule) return;
 
   const commentId = `${kind}:${mid}`;
+  // Set when this trigger holds the rule's cooldown for this person.
+  let cooldownHeld = false;
   const commentText =
     kind === "story"
       ? "[Story mention]"
@@ -2049,6 +2082,25 @@ async function processDmAction(job: Job<ProcessDmActionJob>): Promise<void> {
               errorMessage: automation.oncePerUser
                 ? "Already answered this person (once per person)"
                 : `Answered this person within the last ${cooldown} min (cooldown)`,
+            },
+            update: {},
+          });
+          return;
+        }
+        // Several story frames tagging the account arrive together: one reply.
+        cooldownHeld = await claimCooldown(automation.id, userId, automation.oncePerUser ? null : cooldown, commentId);
+        if (!cooldownHeld) {
+          await prisma.dmLog.upsert({
+            where: { automationId_commentId: { automationId: automation.id, commentId } },
+            create: {
+              workspaceId: automation.workspaceId,
+              automationId: automation.id,
+              instagramAccountId: automation.instagramAccountId,
+              commenterId: userId,
+              commentText,
+              commentId,
+              status: "SKIPPED_DEDUP",
+              errorMessage: "Answered another mention or tap from this person just now",
             },
             update: {},
           });
@@ -2121,6 +2173,9 @@ async function processDmAction(job: Job<ProcessDmActionJob>): Promise<void> {
       });
     }
   } catch (error) {
+    if (cooldownHeld && automation && isConfirmedSendRejection(error)) {
+      await releaseCooldown(automation.id, userId, commentId);
+    }
     if (logBase) {
       await prisma.dmLog.upsert({
         where: { automationId_commentId: { automationId: logBase.automationId, commentId } },

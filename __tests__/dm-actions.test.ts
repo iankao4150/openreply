@@ -11,6 +11,7 @@ const h = vi.hoisted(() => ({
   sendModuleAsDirectMessage: vi.fn(),
   isHumanHandling: vi.fn(),
   markAutomatedSend: vi.fn(),
+  claimCooldown: vi.fn(async () => true),
 }));
 
 vi.mock("@/lib/ops/opt-out", () => ({
@@ -35,6 +36,10 @@ vi.mock("@/lib/ops/human-pause", () => ({
   recordEcho: vi.fn(),
   rememberSentMid: vi.fn(),
   pauseForHuman: vi.fn(),
+}));
+vi.mock("@/lib/ops/cooldown", () => ({
+  claimCooldown: h.claimCooldown,
+  releaseCooldown: vi.fn(),
 }));
 vi.mock("@/lib/contacts/record", () => ({
   tagContact: vi.fn().mockResolvedValue(undefined),
@@ -164,12 +169,12 @@ describe("DM actions", () => {
   it("stays quiet on a story mention while a person handles the chat", async () => {
     h.isHumanHandling.mockResolvedValue(true);
     await run({ instagramAccountId: "biz", userId: "u1", kind: "story", mid: "m3" });
-    expect(h.prisma.automation.findFirst).not.toHaveBeenCalled();
+    expect(h.prisma.automation.findMany).not.toHaveBeenCalled();
     expect(h.sendModuleAsDirectMessage).not.toHaveBeenCalled();
   });
 
   it("answers each person's story mentions at most once a day by default", async () => {
-    h.prisma.automation.findFirst.mockResolvedValue({ ...rule, iceBreakerQuestion: null });
+    h.prisma.automation.findMany.mockResolvedValue([{ ...rule, iceBreakerQuestion: null, hoursMode: "ALWAYS" }]);
     h.prisma.dmLog.findFirst.mockResolvedValueOnce({ id: "recent" });
     await run({ instagramAccountId: "biz", userId: "u1", kind: "story", mid: "m4" });
     expect(h.sendModuleAsDirectMessage).not.toHaveBeenCalled();
@@ -208,8 +213,33 @@ describe("DM actions", () => {
     expect(h.prisma.postbackDelivery.delete).toHaveBeenCalledTimes(1);
   });
 
+  it("answers several story frames that arrive together only once", async () => {
+    h.prisma.automation.findMany.mockResolvedValue([{ ...rule, iceBreakerQuestion: null, hoursMode: "ALWAYS" }]);
+    h.claimCooldown.mockResolvedValueOnce(false);
+    await run({ instagramAccountId: "biz", userId: "u1", kind: "story", mid: "m6" });
+    expect(h.sendModuleAsDirectMessage).not.toHaveBeenCalled();
+    expect(h.prisma.dmLog.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({ create: expect.objectContaining({ status: "SKIPPED_DEDUP", commentId: "story:m6" }) })
+    );
+  });
+
+  it("uses the story rule whose business hours allow a reply now", async () => {
+    const allDay = { timezone: "Asia/Taipei", days: [0, 1, 2, 3, 4, 5, 6], open: "00:00", close: "23:59" };
+    h.prisma.instagramAccount.findFirst.mockResolvedValue({ ...account, businessHours: allDay });
+    const away = { ...rule, id: "awayrule12345", iceBreakerQuestion: null, hoursMode: "CLOSED" };
+    const open = { ...rule, id: "openrule12345", iceBreakerQuestion: null, hoursMode: "OPEN" };
+    h.prisma.automation.findMany.mockResolvedValue([away, open]);
+    await run({ instagramAccountId: "biz", userId: "u1", kind: "story", mid: "m10" });
+    const at = new Date();
+    const taipeiMinute = (at.getUTCHours() * 60 + at.getUTCMinutes() + 8 * 60) % 1440;
+    const expected = taipeiMinute >= 23 * 60 + 59 ? "awayrule12345" : "openrule12345";
+    expect(h.prisma.dmLog.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({ create: expect.objectContaining({ automationId: expected, status: "SENT" }) })
+    );
+  });
+
   it("answers a first story mention", async () => {
-    h.prisma.automation.findFirst.mockResolvedValue({ ...rule, iceBreakerQuestion: null });
+    h.prisma.automation.findMany.mockResolvedValue([{ ...rule, iceBreakerQuestion: null, hoursMode: "ALWAYS" }]);
     await run({ instagramAccountId: "biz", userId: "u1", kind: "story", mid: "m5" });
     expect(h.sendModuleAsDirectMessage).toHaveBeenCalledTimes(1);
     expect(h.prisma.dmLog.upsert).toHaveBeenCalledWith(
@@ -355,6 +385,26 @@ describe("default replies and business hours", () => {
     expect(answeredBy()).toEqual([]);
     const window = h.prisma.dmLog.findFirst.mock.calls.find((c) => c[0].where.createdAt)![0].where.createdAt.gt as Date;
     expect(Date.now() - window.getTime()).toBeGreaterThan(23 * 3_600_000);
+  });
+
+  it("answers only one of several messages sent together", async () => {
+    h.prisma.automation.findMany.mockResolvedValue([defaultRule]);
+    h.claimCooldown.mockResolvedValueOnce(false);
+    await runMessage("在嗎");
+    expect(answeredBy()).toEqual([]);
+    expect(h.sendModuleAsDirectMessage).not.toHaveBeenCalled();
+    expect(h.prisma.dmLog.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({ status: "SKIPPED_DEDUP", errorMessage: "Answered another message from this person just now" }),
+      })
+    );
+  });
+
+  it("lets no later rule answer a message an earlier run already handled", async () => {
+    h.prisma.automation.findMany.mockResolvedValue([keywordRule, { ...keywordRule, id: "keywordrule456" }]);
+    h.prisma.dmLog.findUnique.mockResolvedValueOnce({ status: "SKIPPED_DEDUP" });
+    await runMessage("價格");
+    expect(h.sendModuleAsDirectMessage).not.toHaveBeenCalled();
   });
 
   it("keeps an away message quiet while the account is open", async () => {

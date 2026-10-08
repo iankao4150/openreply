@@ -32,7 +32,7 @@ interface Draw {
   permalink: string | null;
   entrants: number;
   winners: Winner[];
-  settings: { keyword: string | null; minMentions: number; uniquePerUser: boolean; commentsRead?: number; truncated?: boolean };
+  settings: { keyword: string | null; minMentions: number; uniquePerUser: boolean; commentsRead?: number };
   createdAt: string;
   instagramAccount?: { username: string };
 }
@@ -121,6 +121,9 @@ export default function GiveawayPage() {
     });
     const data = await res.json().catch(() => null);
     setDrawing(false);
+    if (data?.error === "too_many_comments") {
+      return setError(t("This post has too many comments to read in one go ({count} read), so no draw was made to keep it fair.", { count: data.commentsRead ?? 0 }));
+    }
     if (!data?.success) return setError(t("Could not read the comments. Try again in a minute."));
     setResult(data.data);
     void loadHistory();
@@ -261,7 +264,6 @@ export default function GiveawayPage() {
                 entrants: result.entrants,
                 comments: result.settings.commentsRead ?? result.entrants,
               })}
-              {result.settings.truncated && ` · ${t("only the first 10,000 comments were read")}`}
             </p>
             {result.winners.length === 0 ? (
               <p className="text-sm text-muted">{t("No comment met the rules.")}</p>

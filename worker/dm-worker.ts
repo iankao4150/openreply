@@ -2,6 +2,7 @@ import { createDMWorker } from "@/lib/queue/dm-worker";
 import { recordWorkerHeartbeat } from "@/lib/ops/worker-health";
 import { reconcileComments } from "@/lib/polling/comment-reconciler";
 import { attachPendingNextReels } from "@/lib/automation/attach-next-reel";
+import { resumeStalledBroadcasts } from "@/lib/broadcasts/send";
 import os from "node:os";
 
 const worker = createDMWorker();
@@ -41,6 +42,13 @@ async function poll() {
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unknown error";
     console.error("[DM Worker] Comment reconciliation failed:", message);
+  }
+  try {
+    const resumed = await resumeStalledBroadcasts();
+    if (resumed > 0) console.log(`[DM Worker] Resumed ${resumed} stalled broadcast(s)`);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown error";
+    console.error("[DM Worker] Broadcast sweep failed:", message);
   }
 }
 

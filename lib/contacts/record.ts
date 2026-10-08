@@ -8,6 +8,8 @@ export interface ContactTouch {
   username?: string | null;
   /** "inbound" opens Instagram's 24-hour messaging window; a comment does not. */
   kind: "comment" | "inbound";
+  /** When it happened, if the webhook says; a late redelivery must not extend the window. */
+  at?: Date;
 }
 
 const MAX_TAGS = 30;
@@ -31,7 +33,8 @@ export function normalizeTags(tags: readonly string[]): string[] {
 }
 
 async function upsertContact(touch: ContactTouch, now: Date): Promise<void> {
-  const at = touch.kind === "inbound" ? { lastInboundAt: now } : { lastCommentAt: now };
+  const when = touch.at && touch.at.getTime() <= now.getTime() ? touch.at : now;
+  const at = touch.kind === "inbound" ? { lastInboundAt: when } : { lastCommentAt: when };
   const username = touch.username?.trim() || undefined;
   const update = { lastSeenAt: now, interactions: { increment: 1 }, ...at, ...(username ? { username } : {}) };
   const where = { instagramAccountId_userId: { instagramAccountId: touch.instagramAccountId, userId: touch.userId } };

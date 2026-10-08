@@ -3,6 +3,7 @@ import { z } from "zod";
 import { prisma } from "@/lib/db/client";
 import { getWorkspaceInstagramAccount } from "@/lib/instagram-accounts";
 import { createInstagramContext, getRecentMediaComments, MetaApiError } from "@/lib/instagram/provider";
+import { getAllMediaComments } from "@/lib/meta/client";
 import { eligibleEntries, pickWinners } from "@/lib/giveaway/draw";
 import { canManageWorkspace, getCurrentWorkspaceContext } from "@/lib/workspace-access";
 
@@ -11,11 +12,18 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
 const MAX_COMMENTS = 10_000;
+// Leave room for the draw and the response inside maxDuration.
+const READ_BUDGET_MS = 45_000;
 
 const drawSchema = z.object({
   instagramAccountId: z.string().min(1).optional().nullable(),
   mediaId: z.string().regex(/^\d{5,40}$/),
-  permalink: z.string().url().optional().nullable(),
+  permalink: z
+    .string()
+    .url()
+    .refine((url) => /^https:\/\/(www\.)?instagram\.com\//i.test(url))
+    .optional()
+    .nullable(),
   winners: z.number().int().min(1).max(50),
   keyword: z.string().trim().max(50).optional().nullable(),
   minMentions: z.number().int().min(0).max(10).default(0),
@@ -52,11 +60,27 @@ export async function POST(request: NextRequest) {
   if (!account) return fail("Instagram account not connected.", 400);
 
   let comments;
+  let complete: boolean;
   try {
     const instagram = await createInstagramContext(account);
-    comments = await getRecentMediaComments({ context: instagram, mediaId: rules.mediaId, sinceMs: 0, max: MAX_COMMENTS });
+    if (instagram.provider === "META") {
+      ({ comments, complete } = await getAllMediaComments(instagram.accessToken, rules.mediaId, {
+        max: MAX_COMMENTS,
+        deadline: Date.now() + READ_BUDGET_MS,
+      }));
+    } else {
+      comments = await getRecentMediaComments({ context: instagram, mediaId: rules.mediaId, sinceMs: 0, max: MAX_COMMENTS });
+      complete = comments.length < MAX_COMMENTS;
+    }
   } catch (error) {
     return fail(error instanceof MetaApiError ? error.message : "Could not read the comments", 502);
+  }
+  // Drawing from part of the comments would leave some entrants out.
+  if (!complete) {
+    return NextResponse.json(
+      { success: false, error: "too_many_comments", commentsRead: comments.length },
+      { status: 422 }
+    );
   }
 
   const entries = eligibleEntries(
@@ -85,7 +109,6 @@ export async function POST(request: NextRequest) {
         uniquePerUser: rules.uniquePerUser,
         excludeUsernames: rules.excludeUsernames,
         commentsRead: comments.length,
-        truncated: comments.length >= MAX_COMMENTS,
       },
       entrants: entries.length,
       winners: winners.map(({ username, commentId, text }) => ({ username, commentId, text })),

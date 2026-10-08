@@ -73,7 +73,7 @@ describe("telling our own echoes from a person's", () => {
   it("covers an echo that arrives before the send returned its id", async () => {
     await markAutomatedSend("biz", "u1");
     expect(await recordEcho("biz", "u1", 30, "mid-not-yet-known")).toBe("automated");
-    expect(redis.set).toHaveBeenCalledWith("openreply:automated:biz:u1", "1", "EX", 30);
+    expect(redis.set).toHaveBeenCalledWith("openreply:automated:biz:u1", expect.any(String), "EX", 30);
   });
 });
 
