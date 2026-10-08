@@ -51,6 +51,19 @@ export function getMetaGraphApiVersion(): string {
 }
 
 /**
+ * Direct Meta connections normally use the Instagram API with Instagram Login.
+ * Meta stopped offering "API setup with Instagram login" on apps created in
+ * October 2026 — new apps only get the Facebook-login variant. Setting
+ * META_LOGIN_MODE=facebook switches the direct provider to the Instagram API
+ * with Facebook Login: the account is reached through the Facebook Page it is
+ * linked to, with that Page's access token, on graph.facebook.com. In this mode
+ * INSTAGRAM_APP_ID / INSTAGRAM_APP_SECRET hold the Facebook app's ID and secret.
+ */
+export function usesFacebookLogin(): boolean {
+  return process.env.META_LOGIN_MODE === "facebook";
+}
+
+/**
  * The public demo, and the only host where sign-in is blocked. This repo is
  * something other people clone and deploy; a self-hoster's own domain must
  * never match this and must never be blocked from logging in — that's the

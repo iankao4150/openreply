@@ -5,7 +5,12 @@ import {
   randomBytes,
   timingSafeEqual,
 } from "crypto";
-import { getEncryptionKeyHex, requireEnv } from "@/lib/env";
+import {
+  getEncryptionKeyHex,
+  getMetaGraphApiVersion,
+  requireEnv,
+  usesFacebookLogin,
+} from "@/lib/env";
 
 // Instagram API with Instagram Login authorizes on www.instagram.com. The old
 // api.instagram.com/oauth/authorize host belonged to the retired Basic Display
@@ -14,6 +19,20 @@ import { getEncryptionKeyHex, requireEnv } from "@/lib/env";
 // api.instagram.com — only the authorize hop moved.
 const INSTAGRAM_OAUTH_URL = "https://www.instagram.com/oauth/authorize";
 const INSTAGRAM_TOKEN_URL = "https://api.instagram.com/oauth/access_token";
+// Facebook Login (META_LOGIN_MODE=facebook). Pages and their linked Instagram
+// accounts need these; pages_messaging covers private replies to comments and
+// pages_manage_metadata the Page webhook subscription.
+const FACEBOOK_LOGIN_SCOPES = [
+  "instagram_basic",
+  "instagram_manage_comments",
+  "instagram_manage_messages",
+  "instagram_manage_insights",
+  "pages_show_list",
+  "pages_read_engagement",
+  "pages_manage_metadata",
+  "pages_messaging",
+  "business_management",
+].join(",");
 const ALGORITHM = "aes-256-gcm";
 const IV_LENGTH = 16;
 const AUTH_TAG_LENGTH = 16;
@@ -88,6 +107,21 @@ export function verifyOAuthState(state: string | null): OAuthStatePayload | null
 }
 
 export function getAuthorizationUrl(redirectUri: string, state: string): string {
+  if (usesFacebookLogin()) {
+    const params = new URLSearchParams({
+      client_id: requireEnv("INSTAGRAM_APP_ID"),
+      redirect_uri: redirectUri,
+      response_type: "code",
+      state,
+    });
+    // Apps with Facebook Login for Business authorize against a saved
+    // configuration rather than a scope list.
+    const configId = process.env.META_FB_LOGIN_CONFIG_ID;
+    if (configId) params.set("config_id", configId);
+    else params.set("scope", FACEBOOK_LOGIN_SCOPES);
+    return `https://www.facebook.com/${getMetaGraphApiVersion()}/dialog/oauth?${params.toString()}`;
+  }
+
   const params = new URLSearchParams({
     client_id: requireEnv("INSTAGRAM_APP_ID"),
     redirect_uri: redirectUri,
@@ -104,6 +138,26 @@ export async function exchangeCodeForToken(
   code: string,
   redirectUri: string
 ): Promise<{ accessToken: string; userId: string }> {
+  if (usesFacebookLogin()) {
+    const url = new URL(
+      `https://graph.facebook.com/${getMetaGraphApiVersion()}/oauth/access_token`
+    );
+    url.searchParams.set("client_id", requireEnv("INSTAGRAM_APP_ID"));
+    url.searchParams.set("client_secret", requireEnv("INSTAGRAM_APP_SECRET"));
+    url.searchParams.set("redirect_uri", redirectUri);
+    url.searchParams.set("code", code);
+
+    const response = await fetch(url.toString());
+    const data = await response.json();
+    if (!response.ok || data.error) {
+      throw new Error(
+        `Token exchange failed: ${data.error?.message || JSON.stringify(data)}`
+      );
+    }
+    // A Facebook user token: the Instagram accounts come from its Pages.
+    return { accessToken: data.access_token, userId: "" };
+  }
+
   const body = new URLSearchParams({
     client_id: requireEnv("INSTAGRAM_APP_ID"),
     client_secret: requireEnv("INSTAGRAM_APP_SECRET"),

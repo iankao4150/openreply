@@ -1,15 +1,94 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/db/client";
-import { getBaseUrl } from "@/lib/env";
+import { getBaseUrl, usesFacebookLogin } from "@/lib/env";
 import { canConnectInstagramAccount } from "@/lib/instagram-accounts";
-import { getLongLivedToken, getUserInfo, subscribeInstagramAccountToWebhooks } from "@/lib/meta/client";
+import {
+  getInstagramLinkedPages,
+  getLongLivedToken,
+  getLongLivedUserToken,
+  getUserInfo,
+  subscribeInstagramAccountToWebhooks,
+} from "@/lib/meta/client";
 import {
   encryptToken,
   exchangeCodeForToken,
   verifyOAuthState,
 } from "@/lib/meta/oauth";
 import { canManageWorkspace } from "@/lib/workspace-access";
+
+type AccountData = {
+  username: string;
+  name?: string;
+  accessToken: string;
+  tokenExpiresAt: Date | null;
+  webhookSubscribed: boolean;
+};
+
+/** Upsert a direct-Meta account. False when another workspace or provider owns it. */
+async function saveMetaAccount(
+  workspaceId: string,
+  instagramId: string,
+  data: AccountData
+): Promise<boolean> {
+  const existing = await prisma.instagramAccount.findUnique({ where: { instagramId } });
+  if (existing) {
+    const updated = await prisma.instagramAccount.updateMany({
+      where: { id: existing.id, workspaceId, provider: 'META' }, data,
+    });
+    return updated.count > 0;
+  }
+  await prisma.instagramAccount.create({ data: { ...data, workspaceId, instagramId, provider: 'META' } });
+  return true;
+}
+
+async function subscribeWebhooks(instagramId: string, token: string): Promise<boolean> {
+  try {
+    const subscription = await subscribeInstagramAccountToWebhooks(instagramId, token);
+    return Boolean(subscription.success);
+  } catch (subscriptionError) {
+    console.warn("[Instagram Callback] Webhook subscription failed:", subscriptionError);
+    return false;
+  }
+}
+
+/**
+ * Facebook Login (META_LOGIN_MODE=facebook): the login yields a user token, and
+ * every Page it manages with a linked Instagram professional account becomes a
+ * connected account, stored with that Page's non-expiring token.
+ */
+async function connectFacebookLoginAccounts(
+  code: string,
+  redirectUri: string,
+  workspaceId: string
+): Promise<"connected" | "already_connected"> {
+  const { accessToken: shortLivedToken } = await exchangeCodeForToken(code, redirectUri);
+  const userToken = await getLongLivedUserToken(shortLivedToken);
+  const pages = await getInstagramLinkedPages(userToken);
+  if (pages.length === 0) {
+    throw new Error(
+      "No Facebook Page with a linked Instagram professional account was granted to this app"
+    );
+  }
+
+  let connected = 0;
+  for (const page of pages) {
+    const instagramId = page.instagram.user_id ?? page.instagram.id;
+    const connection = await canConnectInstagramAccount({ workspaceId, instagramId });
+    if (!connection.allowed) continue;
+
+    const saved = await saveMetaAccount(workspaceId, instagramId, {
+      username: page.instagram.username,
+      name: page.instagram.name,
+      accessToken: encryptToken(page.pageAccessToken),
+      tokenExpiresAt: null,
+      webhookSubscribed: await subscribeWebhooks(instagramId, page.pageAccessToken),
+    });
+    if (saved) connected++;
+  }
+
+  return connected > 0 ? "connected" : "already_connected";
+}
 
 export async function GET(request: NextRequest) {
   const code = request.nextUrl.searchParams.get("code");
@@ -43,6 +122,15 @@ export async function GET(request: NextRequest) {
 
   try {
     const redirectUri = `${baseUrl}/api/instagram/callback`;
+    if (usesFacebookLogin()) {
+      const outcome = await connectFacebookLoginAccounts(code, redirectUri, state.workspaceId);
+      return NextResponse.redirect(
+        outcome === "connected"
+          ? `${baseUrl}/dashboard?connected=true`
+          : `${baseUrl}/settings?instagram=already_connected`
+      );
+    }
+
     const { accessToken: shortLivedToken } = await exchangeCodeForToken(
       code,
       redirectUri
@@ -69,36 +157,14 @@ export async function GET(request: NextRequest) {
     const encryptedToken = encryptToken(longLivedToken);
     const tokenExpiresAt = new Date(Date.now() + expiresIn * 1000);
 
-    let webhookSubscribed = false;
-    try {
-      const subscription = await subscribeInstagramAccountToWebhooks(
-        instagramId,
-        longLivedToken
-      );
-      webhookSubscribed = Boolean(subscription.success);
-    } catch (subscriptionError) {
-      console.warn(
-        "[Instagram Callback] Webhook subscription failed:",
-        subscriptionError
-      );
-    }
-
-    const data = {
+    const saved = await saveMetaAccount(state.workspaceId, instagramId, {
       username: userInfo.username,
       name: userInfo.name,
       accessToken: encryptedToken,
       tokenExpiresAt,
-      webhookSubscribed,
-    };
-    const existing = await prisma.instagramAccount.findUnique({ where: { instagramId } });
-    if (existing) {
-      const updated = await prisma.instagramAccount.updateMany({
-        where: { id: existing.id, workspaceId: state.workspaceId, provider: 'META' }, data,
-      });
-      if (!updated.count) return NextResponse.redirect(`${baseUrl}/settings?instagram=already_connected`);
-    } else {
-      await prisma.instagramAccount.create({ data: { ...data, workspaceId: state.workspaceId, instagramId, provider: 'META' } });
-    }
+      webhookSubscribed: await subscribeWebhooks(instagramId, longLivedToken),
+    });
+    if (!saved) return NextResponse.redirect(`${baseUrl}/settings?instagram=already_connected`);
 
     return NextResponse.redirect(`${baseUrl}/dashboard?connected=true`);
   } catch (err) {
