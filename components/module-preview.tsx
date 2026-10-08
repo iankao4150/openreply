@@ -3,6 +3,8 @@
 import { useI18n } from "@/lib/i18n/provider";
 
 export interface PreviewCard {
+  /** Stable id of a saved card; keeps its tracked links when cards move. */
+  id?: string;
   imageUrl: string;
   title: string;
   subtitle: string;

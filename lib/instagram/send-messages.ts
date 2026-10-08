@@ -6,6 +6,7 @@ import {
   ZernioDeliveryUnconfirmedError,
 } from "@/lib/zernio/client";
 import type { InstagramContext, ZernioContext } from "./context";
+import { markAutomatedSend, rememberSentMid } from "@/lib/ops/human-pause";
 
 type Button =
   | { type: "url"; title: string; url: string }
@@ -73,7 +74,7 @@ function linkButtons(buttons: meta.LinkButton[]): Button[] {
     .map(({ title, url }) => ({ type: "url", title: title.slice(0, 20), url }));
 }
 
-export async function sendPrivateReply({
+async function sendPrivateReplyUntracked({
   context,
   instagramAccountId,
   commentId,
@@ -96,7 +97,7 @@ export async function sendPrivateReply({
   return sendZernioMessage({ context, commentId, postId, text: message });
 }
 
-export async function sendPrivateReplyWithButton({
+async function sendPrivateReplyWithButtonUntracked({
   context,
   instagramAccountId,
   commentId,
@@ -131,7 +132,7 @@ export async function sendPrivateReplyWithButton({
   });
 }
 
-export async function sendDirectMessageWithButton({
+async function sendDirectMessageWithButtonUntracked({
   context,
   instagramAccountId,
   userId,
@@ -163,7 +164,7 @@ export async function sendDirectMessageWithButton({
   });
 }
 
-export async function sendPrivateReplyWithLinkButton({
+async function sendPrivateReplyWithLinkButtonUntracked({
   context,
   instagramAccountId,
   commentId,
@@ -195,7 +196,7 @@ export async function sendPrivateReplyWithLinkButton({
   });
 }
 
-export async function sendDirectMessage({
+async function sendDirectMessageUntracked({
   context,
   instagramAccountId,
   userId,
@@ -216,7 +217,7 @@ export async function sendDirectMessage({
   return sendZernioMessage({ context, recipientId: userId, text: message });
 }
 
-export async function sendDirectMessageWithLinkButton({
+async function sendDirectMessageWithLinkButtonUntracked({
   context,
   instagramAccountId,
   userId,
@@ -282,7 +283,7 @@ export class CardsUnsupportedError extends Error {
   }
 }
 
-export async function sendPrivateReplyWithCards({
+async function sendPrivateReplyWithCardsUntracked({
   context,
   instagramAccountId,
   commentId,
@@ -297,7 +298,7 @@ export async function sendPrivateReplyWithCards({
   return meta.sendPrivateReplyWithCards(context.accessToken, instagramAccountId, commentId, elements);
 }
 
-export async function sendDirectMessageWithCards({
+async function sendDirectMessageWithCardsUntracked({
   context,
   instagramAccountId,
   userId,
@@ -312,7 +313,7 @@ export async function sendDirectMessageWithCards({
   return meta.sendDirectMessageWithCards(context.accessToken, instagramAccountId, userId, elements);
 }
 
-export async function sendDirectMessageWithQuickReplies({
+async function sendDirectMessageWithQuickRepliesUntracked({
   context,
   instagramAccountId,
   userId,
@@ -346,4 +347,59 @@ export async function hideComment({
   if (context.provider !== "META") return false;
   const result = await meta.hideComment(context.accessToken, commentId);
   return Boolean(result.success);
+}
+
+/**
+ * Who a message comes from. Automated sends are remembered (by message id) so
+ * their echoes are not mistaken for a person replying by hand; the inbox sends
+ * as "human", and its echo pauses the automation like any manual reply.
+ */
+export type SendOrigin = "automation" | "human";
+
+async function track<T>(
+  args: { instagramAccountId: string; userId?: string; origin?: SendOrigin },
+  send: () => Promise<T>
+): Promise<T> {
+  if (args.origin === "human") return send();
+  if (args.userId) await markAutomatedSend(args.instagramAccountId, args.userId);
+  const result = await send();
+  const mid = (result as { message_id?: unknown } | null)?.message_id;
+  if (typeof mid === "string" && mid) await rememberSentMid(mid);
+  return result;
+}
+
+export async function sendPrivateReply(args: Parameters<typeof sendPrivateReplyUntracked>[0] & { origin?: SendOrigin }) {
+  return track(args, () => sendPrivateReplyUntracked(args));
+}
+
+export async function sendPrivateReplyWithButton(args: Parameters<typeof sendPrivateReplyWithButtonUntracked>[0] & { origin?: SendOrigin }) {
+  return track(args, () => sendPrivateReplyWithButtonUntracked(args));
+}
+
+export async function sendDirectMessageWithButton(args: Parameters<typeof sendDirectMessageWithButtonUntracked>[0] & { origin?: SendOrigin }) {
+  return track(args, () => sendDirectMessageWithButtonUntracked(args));
+}
+
+export async function sendPrivateReplyWithLinkButton(args: Parameters<typeof sendPrivateReplyWithLinkButtonUntracked>[0] & { origin?: SendOrigin }) {
+  return track(args, () => sendPrivateReplyWithLinkButtonUntracked(args));
+}
+
+export async function sendDirectMessage(args: Parameters<typeof sendDirectMessageUntracked>[0] & { origin?: SendOrigin }) {
+  return track(args, () => sendDirectMessageUntracked(args));
+}
+
+export async function sendDirectMessageWithLinkButton(args: Parameters<typeof sendDirectMessageWithLinkButtonUntracked>[0] & { origin?: SendOrigin }) {
+  return track(args, () => sendDirectMessageWithLinkButtonUntracked(args));
+}
+
+export async function sendPrivateReplyWithCards(args: Parameters<typeof sendPrivateReplyWithCardsUntracked>[0] & { origin?: SendOrigin }) {
+  return track(args, () => sendPrivateReplyWithCardsUntracked(args));
+}
+
+export async function sendDirectMessageWithCards(args: Parameters<typeof sendDirectMessageWithCardsUntracked>[0] & { origin?: SendOrigin }) {
+  return track(args, () => sendDirectMessageWithCardsUntracked(args));
+}
+
+export async function sendDirectMessageWithQuickReplies(args: Parameters<typeof sendDirectMessageWithQuickRepliesUntracked>[0] & { origin?: SendOrigin }) {
+  return track(args, () => sendDirectMessageWithQuickRepliesUntracked(args));
 }

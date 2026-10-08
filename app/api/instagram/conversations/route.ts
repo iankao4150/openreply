@@ -149,6 +149,8 @@ export async function POST(request: NextRequest) {
       instagramAccountId: account.instagramId,
       userId: body.recipientId,
       message: text,
+      // A person wrote this: its echo pauses the automation for this chat.
+      origin: "human",
     });
     return NextResponse.json({ success: true, data: result });
   } catch (err) {

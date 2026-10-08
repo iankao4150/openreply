@@ -68,7 +68,7 @@ describe("webhook parsing for DM actions", () => {
       { sender: { id: "biz" }, recipient: { id: "u1" }, message: { mid: "m1", text: "hi", is_echo: true } },
       { sender: { id: "u2" }, recipient: { id: "biz" }, message: { mid: "m2", text: "hello" } },
     ]);
-    expect(parseEchoEvents(payload)).toEqual([{ instagramAccountId: "biz", userId: "u1" }]);
+    expect(parseEchoEvents(payload)).toEqual([{ instagramAccountId: "biz", userId: "u1", mid: "m1" }]);
     expect(parseMessageEvents(payload).map((e) => e.messageId)).toEqual(["m2"]);
   });
 });

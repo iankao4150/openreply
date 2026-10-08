@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { z } from "zod";
 
 // Instagram's generic template limits.
@@ -26,6 +27,8 @@ export interface ModuleQuickReply {
 }
 
 export interface ModuleCard {
+  /** Stable id, so a card keeps its tracked links when cards are reordered. */
+  id?: string;
   imageUrl: string | null;
   title: string;
   subtitle: string | null;
@@ -74,6 +77,7 @@ export const moduleQuickReplySchema = z.object({
 
 export const moduleCardSchema = z
   .object({
+    id: z.string().regex(/^[a-z0-9]{6,32}$/i).optional(),
     imageUrl: optionalHttpsUrl,
     title: z.string().trim().min(1).max(CARD_TITLE_MAX),
     subtitle: z
@@ -102,7 +106,7 @@ export const moduleInputSchema = z.object({
     .optional()
     .nullable()
     .transform((value) => value || null),
-  cards: z.array(moduleCardSchema).min(1).max(MAX_CARDS),
+  cards: z.array(moduleCardSchema).min(1).max(MAX_CARDS).transform((cards) => ensureCardIds(cards)),
   quickReplies: z.array(moduleQuickReplySchema).max(MAX_QUICK_REPLIES).default([]),
   quickReplyPrompt: z
     .string()
@@ -130,6 +134,22 @@ export function parseStoredCards(value: unknown): ModuleCard[] {
     if (parsed.success) cards.push(parsed.data);
   }
   return cards;
+}
+
+/** Give every card an id, and a fresh one to a copy that repeats another's. */
+export function ensureCardIds(cards: ModuleCard[]): ModuleCard[] {
+  const seen = new Set<string>();
+  return cards.map((card) => {
+    let id = card.id;
+    if (!id || seen.has(id)) id = randomBytes(6).toString("hex");
+    seen.add(id);
+    return { ...card, id };
+  });
+}
+
+/** The key a card's tracked links hang on: its id, or its position before ids existed. */
+export function cardKeyOf(card: ModuleCard, index: number): string {
+  return card.id ?? `pos${index + 1}`;
 }
 
 /**

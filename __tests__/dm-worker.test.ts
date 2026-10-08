@@ -83,6 +83,13 @@ vi.mock("@/lib/ops/human-pause", () => ({
   markAutomatedSend: vi.fn().mockResolvedValue(undefined),
   isHumanHandling: vi.fn().mockResolvedValue(false),
   recordEcho: vi.fn().mockResolvedValue("ignored"),
+  rememberSentMid: vi.fn().mockResolvedValue(undefined),
+  pauseForHuman: vi.fn().mockResolvedValue(undefined),
+}));
+vi.mock("@/lib/contacts/record", () => ({
+  tagContact: vi.fn().mockResolvedValue(undefined),
+  recordContacts: vi.fn().mockResolvedValue(undefined),
+  normalizeTags: (tags: string[]) => tags,
 }));
 vi.mock("@/lib/db/client", () => ({
   prisma: mockPrisma,
@@ -170,6 +177,7 @@ vi.mock("bullmq", () => {
 
 import { MetaApiError, RateLimitError } from "@/lib/meta/client";
 import { createDMWorker } from "../lib/queue/dm-worker";
+import { isOptedOut } from "@/lib/ops/opt-out";
 import { getRedisConnection } from "@/lib/queue/client";
 import { hashRecipientId } from "@/lib/tracking/server";
 
@@ -387,7 +395,7 @@ describe("DM Worker — Full Pipeline", () => {
             cards: true,
             quickReplies: true,
             quickReplyPrompt: true,
-            links: { select: { slug: true, card: true, slot: true } },
+            links: { where: { retiredAt: null }, select: { slug: true, card: true, cardKey: true, slot: true } },
           },
         },
       },
@@ -828,6 +836,25 @@ describe("DM Worker — Full Pipeline", () => {
     );
   });
 
+  it("should not deliver a read fallback to someone who sent STOP", async () => {
+    mockPrisma.automation.findMany.mockResolvedValue([]);
+    mockPrisma.automation.findFirst.mockResolvedValue({ ...mockAutomation, trackedLinks: [] });
+    vi.mocked(isOptedOut).mockResolvedValueOnce(true);
+
+    const processor = getProcessor();
+    await processor(
+      createMockPostbackJob({
+        instagramAccountId: "ig_456",
+        userId: "commenter_999",
+        payload: "reveal:auto_789",
+        fallback: true,
+      })
+    );
+
+    expect(isOptedOut).toHaveBeenCalledWith("ig_456", "commenter_999");
+    expect(mockSendDirectMessage).not.toHaveBeenCalled();
+  });
+
   it("should not deliver a read fallback when the button tap already sent the reveal", async () => {
     mockPrisma.automation.findMany.mockResolvedValue([]);
     mockPrisma.automation.findFirst.mockResolvedValue({
@@ -1246,13 +1273,13 @@ describe("DM Worker — DM keyword trigger", () => {
     );
   });
 
-  it("should release the usage reservation and rethrow when the send fails", async () => {
-    mockSendDirectMessage.mockRejectedValue(new Error("Meta is down"));
+  it("should release the usage reservation and rethrow when Meta refuses the send", async () => {
+    mockSendDirectMessage.mockRejectedValue(
+      new MetaApiError(10, undefined, undefined, "This message is sent outside of allowed window.")
+    );
 
     const processor = getProcessor();
-    await expect(processor(createMockMessageJob())).rejects.toThrow(
-      "Meta is down"
-    );
+    await expect(processor(createMockMessageJob())).rejects.toThrow("outside of allowed window");
 
     expect(mockReleaseWorkspaceDMReservation).toHaveBeenCalledWith(
       "workspace_123",
@@ -1260,7 +1287,22 @@ describe("DM Worker — DM keyword trigger", () => {
     );
     expect(mockPrisma.dmLog.upsert).toHaveBeenCalledWith(
       expect.objectContaining({
-        create: expect.objectContaining({ status: "FAILED" }),
+        create: expect.objectContaining({ status: "FAILED", dmDeliveryUnconfirmed: false }),
+      })
+    );
+  });
+
+  it("does not retry a DM reply whose delivery is uncertain", async () => {
+    mockSendDirectMessage.mockRejectedValue(new Error("Meta is down"));
+
+    const processor = getProcessor();
+    await expect(processor(createMockMessageJob())).rejects.toThrow(/unconfirmed/);
+
+    // It may have arrived: keep the usage and never send it again.
+    expect(mockReleaseWorkspaceDMReservation).not.toHaveBeenCalled();
+    expect(mockPrisma.dmLog.upsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({ status: "FAILED", dmDeliveryUnconfirmed: true }),
       })
     );
   });

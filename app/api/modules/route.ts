@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db/client";
 import { syncModuleLinks } from "@/lib/modules/links";
 import {
+  ensureCardIds,
   moduleInputSchema,
   parseStoredCards,
   parseStoredQuickReplies,
@@ -53,7 +54,7 @@ export async function GET(request: NextRequest) {
     const moduleRecord = await prisma.messageModule.findFirst({
       where: { id, workspaceId },
       include: {
-        links: { select: { id: true, card: true, slot: true, destinationUrl: true } },
+        links: { where: { retiredAt: null }, select: { id: true, card: true, slot: true, destinationUrl: true } },
         automations: { select: { id: true, name: true, dmOnly: true, isActive: true } },
       },
     });
@@ -110,7 +111,7 @@ export async function POST(request: NextRequest) {
       where: { id: body.duplicateFrom, workspaceId },
     });
     if (!source) return fail("Module not found", 404);
-    const cards = parseStoredCards(source.cards);
+    const cards = ensureCardIds(parseStoredCards(source.cards));
     const created = await prisma.$transaction(async (tx) => {
       const copy = await tx.messageModule.create({
         data: {

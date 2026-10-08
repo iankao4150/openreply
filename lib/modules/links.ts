@@ -1,6 +1,7 @@
 import type { Prisma } from "@/app/generated/prisma/client";
 import { generateTrackedLinkSlug } from "@/lib/tracking/server";
 import {
+  cardKeyOf,
   cardSlots,
   slotTerm,
   withUtm,
@@ -16,6 +17,7 @@ export interface ModuleUtm {
 
 export interface DesiredModuleLink {
   card: number;
+  cardKey: string;
   slot: ModuleSlot;
   destinationUrl: string;
 }
@@ -28,6 +30,7 @@ export function desiredModuleLinks(
   return cards.flatMap((card, index) =>
     cardSlots(card).map(({ slot, url }) => ({
       card: index + 1,
+      cardKey: cardKeyOf(card, index),
       slot,
       destinationUrl: withUtm(url, {
         source: utm.utmSource,
@@ -40,9 +43,11 @@ export function desiredModuleLinks(
 }
 
 /**
- * Make a module's tracked links match its cards. A slot keeps its slug (and so
- * its click history) across saves; only its destination is updated. Slots that
- * no longer exist are removed.
+ * Make a module's tracked links match its cards. Links follow the card (by its
+ * id), so reordering keeps each card's slug and click history, and editing a
+ * URL also fixes the link in DMs already sent. A removed card or button
+ * retires its link: it still redirects for messages already out, but is not
+ * used again.
  */
 export async function syncModuleLinks(
   tx: Prisma.TransactionClient,
@@ -55,20 +60,35 @@ export async function syncModuleLinks(
 ) {
   const desired = desiredModuleLinks(cards, utm);
   const existing = await tx.moduleLink.findMany({
-    where: { moduleId },
-    select: { id: true, card: true, slot: true, destinationUrl: true },
+    where: { moduleId, retiredAt: null },
+    select: { id: true, card: true, cardKey: true, slot: true, destinationUrl: true },
   });
-  const key = (card: number, slot: string) => `${card}:${slot}`;
-  const existingByKey = new Map(existing.map((link) => [key(link.card, link.slot), link]));
-  const wanted = new Set(desired.map((link) => key(link.card, link.slot)));
 
-  const stale = existing.filter((link) => !wanted.has(key(link.card, link.slot)));
+  // Links from before cards had ids belong to the card now at their position.
+  const keyAtPosition = new Map(cards.map((card, index) => [index + 1, cardKeyOf(card, index)]));
+  for (const link of existing) {
+    if (link.cardKey && !link.cardKey.startsWith("pos")) continue;
+    const adopted = keyAtPosition.get(link.card) ?? null;
+    if (adopted && adopted !== link.cardKey) {
+      await tx.moduleLink.update({ where: { id: link.id }, data: { cardKey: adopted } });
+      link.cardKey = adopted;
+    }
+  }
+
+  const key = (cardKey: string | null, slot: string) => `${cardKey}:${slot}`;
+  const existingByKey = new Map(existing.map((link) => [key(link.cardKey, link.slot), link]));
+  const wanted = new Set(desired.map((link) => key(link.cardKey, link.slot)));
+
+  const stale = existing.filter((link) => !wanted.has(key(link.cardKey, link.slot)));
   if (stale.length > 0) {
-    await tx.moduleLink.deleteMany({ where: { id: { in: stale.map((link) => link.id) } } });
+    await tx.moduleLink.updateMany({
+      where: { id: { in: stale.map((link) => link.id) } },
+      data: { retiredAt: new Date() },
+    });
   }
 
   for (const link of desired) {
-    const current = existingByKey.get(key(link.card, link.slot));
+    const current = existingByKey.get(key(link.cardKey, link.slot));
     if (!current) {
       await tx.moduleLink.create({
         data: {
@@ -76,14 +96,15 @@ export async function syncModuleLinks(
           moduleId,
           slug: generateTrackedLinkSlug(),
           card: link.card,
+          cardKey: link.cardKey,
           slot: link.slot,
           destinationUrl: link.destinationUrl,
         },
       });
-    } else if (current.destinationUrl !== link.destinationUrl) {
+    } else if (current.destinationUrl !== link.destinationUrl || current.card !== link.card) {
       await tx.moduleLink.update({
         where: { id: current.id },
-        data: { destinationUrl: link.destinationUrl },
+        data: { destinationUrl: link.destinationUrl, card: link.card },
       });
     }
   }

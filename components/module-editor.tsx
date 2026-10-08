@@ -38,6 +38,7 @@ interface LoadedModule {
   utmMedium: string;
   utmCampaign: string | null;
   cards: {
+    id?: string;
     imageUrl: string | null;
     title: string;
     subtitle: string | null;
@@ -119,6 +120,7 @@ export default function ModuleEditor({ moduleId }: { moduleId?: string }) {
       setCards(
         loaded.cards.length > 0
           ? loaded.cards.map((card) => ({
+              id: card.id,
               imageUrl: card.imageUrl ?? "",
               title: card.title,
               subtitle: card.subtitle ?? "",
@@ -214,6 +216,7 @@ export default function ModuleEditor({ moduleId }: { moduleId?: string }) {
       utmMedium: utmMedium.trim() || "dm",
       utmCampaign: utmCampaign.trim() || null,
       cards: cards.map((card) => ({
+        ...(card.id ? { id: card.id } : {}),
         imageUrl: card.imageUrl.trim() || null,
         title: card.title.trim(),
         subtitle: card.subtitle.trim() || null,

@@ -6,6 +6,7 @@ const h = vi.hoisted(() => ({
     automation: { findFirst: vi.fn(), findMany: vi.fn() },
     messageModule: { findFirst: vi.fn() },
     dmLog: { findUnique: vi.fn(), findFirst: vi.fn(), upsert: vi.fn() },
+    postbackDelivery: { create: vi.fn(), delete: vi.fn() },
   },
   sendModuleAsDirectMessage: vi.fn(),
   isHumanHandling: vi.fn(),
@@ -32,6 +33,13 @@ vi.mock("@/lib/ops/human-pause", () => ({
   isHumanHandling: h.isHumanHandling,
   markAutomatedSend: h.markAutomatedSend,
   recordEcho: vi.fn(),
+  rememberSentMid: vi.fn(),
+  pauseForHuman: vi.fn(),
+}));
+vi.mock("@/lib/contacts/record", () => ({
+  tagContact: vi.fn().mockResolvedValue(undefined),
+  recordContacts: vi.fn().mockResolvedValue(undefined),
+  normalizeTags: (tags: string[]) => tags,
 }));
 vi.mock("@/lib/instagram/provider", async () => {
   const client = await vi.importActual<typeof import("@/lib/meta/client")>("@/lib/meta/client");
@@ -77,7 +85,7 @@ vi.mock("bullmq", () => ({
 import { createDMWorker } from "../lib/queue/dm-worker";
 import { isOptedOut, optOutCommand, setOptOut } from "@/lib/ops/opt-out";
 import { setPendingModule, takePendingModule } from "@/lib/ops/pending-reply";
-import { sendDirectMessage } from "@/lib/instagram/provider";
+import { MetaApiError, sendDirectMessage } from "@/lib/instagram/provider";
 
 const account = { id: "acct", workspaceId: "ws1", instagramId: "biz", provider: "META", accessToken: "enc" };
 const moduleRecord = { id: "modulehoodie123", name: "帽T", introText: null, cards: [], quickReplies: [], links: [] };
@@ -173,6 +181,32 @@ describe("DM actions", () => {
     expect(Date.now() - window.getTime()).toBeGreaterThan(23 * 3_600_000);
   });
 
+  it("never answers a redelivered tap twice, even one with no campaign behind it", async () => {
+    h.prisma.messageModule.findFirst.mockResolvedValue(moduleRecord);
+    h.prisma.postbackDelivery.create.mockRejectedValueOnce(Object.assign(new Error("dup"), { code: "P2002" }));
+    await run({ instagramAccountId: "biz", userId: "u1", kind: "tap", payload: "mod:modulehoodie123:-", mid: "m7" });
+    expect(h.sendModuleAsDirectMessage).not.toHaveBeenCalled();
+  });
+
+  it("does not retry a tap whose reply may have arrived", async () => {
+    h.prisma.messageModule.findFirst.mockResolvedValue(moduleRecord);
+    h.sendModuleAsDirectMessage.mockRejectedValueOnce(new Error("socket hang up"));
+    await expect(
+      run({ instagramAccountId: "biz", userId: "u1", kind: "tap", payload: "mod:modulehoodie123:-", mid: "m8" })
+    ).rejects.toThrow(/unconfirmed/);
+    // The claim stays, so a redelivery is ignored.
+    expect(h.prisma.postbackDelivery.delete).not.toHaveBeenCalled();
+  });
+
+  it("frees the claim when Meta refuses the tap's reply, so a retry can send it", async () => {
+    h.prisma.messageModule.findFirst.mockResolvedValue(moduleRecord);
+    h.sendModuleAsDirectMessage.mockRejectedValueOnce(new MetaApiError(10, undefined, undefined, "outside of allowed window"));
+    await expect(
+      run({ instagramAccountId: "biz", userId: "u1", kind: "tap", payload: "mod:modulehoodie123:-", mid: "m9" })
+    ).rejects.toThrow("outside of allowed window");
+    expect(h.prisma.postbackDelivery.delete).toHaveBeenCalledTimes(1);
+  });
+
   it("answers a first story mention", async () => {
     h.prisma.automation.findFirst.mockResolvedValue({ ...rule, iceBreakerQuestion: null });
     await run({ instagramAccountId: "biz", userId: "u1", kind: "story", mid: "m5" });
@@ -208,7 +242,7 @@ describe("inbound DMs: opt-out and text-first follow-through", () => {
   it("opts a person out on STOP, confirms, and answers nothing else", async () => {
     vi.mocked(optOutCommand).mockReturnValue("stop");
     await runMessage("STOP");
-    expect(setOptOut).toHaveBeenCalledWith("acct", "u1", true);
+    expect(setOptOut).toHaveBeenCalledWith("biz", "u1", true);
     expect(sendDirectMessage).toHaveBeenCalledWith(expect.objectContaining({ userId: "u1", message: "stopped" }));
     expect(h.prisma.automation.findMany).not.toHaveBeenCalled();
   });
@@ -232,11 +266,104 @@ describe("inbound DMs: opt-out and text-first follow-through", () => {
     expect(h.prisma.automation.findMany).not.toHaveBeenCalled();
   });
 
-  it("keeps the promise when delivering fails, for the job's retry", async () => {
+  it("keeps the promise when Meta refuses the cards, for the job's retry", async () => {
+    vi.mocked(takePendingModule).mockResolvedValue("automation1234");
+    h.prisma.automation.findFirst.mockResolvedValue(rule);
+    h.sendModuleAsDirectMessage.mockRejectedValueOnce(new MetaApiError(10, undefined, undefined, "outside of allowed window"));
+    await expect(runMessage("好")).rejects.toThrow("outside of allowed window");
+    expect(setPendingModule).toHaveBeenCalledWith("biz", "u1", "automation1234");
+  });
+
+  it("does not promise the cards again when they may have arrived", async () => {
     vi.mocked(takePendingModule).mockResolvedValue("automation1234");
     h.prisma.automation.findFirst.mockResolvedValue(rule);
     h.sendModuleAsDirectMessage.mockRejectedValueOnce(new Error("network"));
-    await expect(runMessage("好")).rejects.toThrow("network");
-    expect(setPendingModule).toHaveBeenCalledWith("biz", "u1", "automation1234");
+    await expect(runMessage("好")).rejects.toThrow(/unconfirmed/);
+    expect(setPendingModule).not.toHaveBeenCalled();
+  });
+
+  it("treats START from someone who never opted out as an ordinary message", async () => {
+    vi.mocked(optOutCommand).mockReturnValue("start");
+    vi.mocked(setOptOut).mockResolvedValue(false);
+    await runMessage("start");
+    expect(sendDirectMessage).not.toHaveBeenCalledWith(expect.objectContaining({ message: "started" }));
+    expect(h.prisma.automation.findMany).toHaveBeenCalled();
+  });
+
+  it("confirms START from someone who had opted out", async () => {
+    vi.mocked(optOutCommand).mockReturnValue("start");
+    vi.mocked(setOptOut).mockResolvedValue(true);
+    await runMessage("開始");
+    expect(sendDirectMessage).toHaveBeenCalledWith(expect.objectContaining({ message: "started" }));
+    expect(h.prisma.automation.findMany).not.toHaveBeenCalled();
+  });
+});
+
+describe("default replies and business hours", () => {
+  const keywordRule = {
+    ...rule,
+    id: "keywordrule123",
+    dmOnly: true,
+    dmRuleType: "KEYWORD",
+    keywords: ["價格"],
+    matchAnyWord: false,
+    wholeWordMatch: true,
+    hoursMode: "ALWAYS",
+    requireFollow: false,
+    followUpEnabled: false,
+    addTags: [],
+    instagramAccount: { ...account, businessHours: {} },
+  };
+  const defaultRule = { ...keywordRule, id: "defaultrule123", dmRuleType: "DEFAULT", keywords: [] };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    h.prisma.instagramAccount.findFirst.mockResolvedValue(account);
+    h.prisma.dmLog.findUnique.mockResolvedValue(null);
+    h.prisma.dmLog.findFirst.mockResolvedValue(null);
+    h.isHumanHandling.mockResolvedValue(false);
+    vi.mocked(optOutCommand).mockReturnValue(null);
+    vi.mocked(isOptedOut).mockResolvedValue(false);
+    vi.mocked(takePendingModule).mockResolvedValue(null);
+  });
+
+  const answeredBy = () =>
+    h.prisma.dmLog.upsert.mock.calls
+      .map((call) => call[0].create)
+      .filter((row) => row.status === "SENT")
+      .map((row) => row.automationId);
+
+  it("lets a keyword rule answer even when the default reply is older", async () => {
+    h.prisma.automation.findMany.mockResolvedValue([defaultRule, keywordRule]);
+    await runMessage("請問價格？");
+    expect(answeredBy()).toEqual(["keywordrule123"]);
+  });
+
+  it("answers with the default reply when no keyword matches", async () => {
+    h.prisma.automation.findMany.mockResolvedValue([defaultRule, keywordRule]);
+    await runMessage("哈囉");
+    expect(answeredBy()).toEqual(["defaultrule123"]);
+  });
+
+  it("answers each person with the default reply at most once a day", async () => {
+    h.prisma.automation.findMany.mockResolvedValue([defaultRule]);
+    h.prisma.dmLog.findFirst.mockImplementation(async (args: { where: { createdAt?: { gt: Date } } }) =>
+      args.where.createdAt ? { id: "earlier-today" } : null
+    );
+    await runMessage("哈囉");
+    expect(answeredBy()).toEqual([]);
+    const window = h.prisma.dmLog.findFirst.mock.calls.find((c) => c[0].where.createdAt)![0].where.createdAt.gt as Date;
+    expect(Date.now() - window.getTime()).toBeGreaterThan(23 * 3_600_000);
+  });
+
+  it("keeps an away message quiet while the account is open", async () => {
+    const hours = { timezone: "Asia/Taipei", days: [0, 1, 2, 3, 4, 5, 6], open: "00:00", close: "23:59" };
+    const away = { ...defaultRule, hoursMode: "CLOSED", instagramAccount: { ...account, businessHours: hours } };
+    h.prisma.automation.findMany.mockResolvedValue([away]);
+    const at = new Date();
+    const taipeiMinute = (at.getUTCHours() * 60 + at.getUTCMinutes() + 8 * 60) % 1440;
+    await runMessage("哈囉");
+    // Open all day except 23:59–24:00 in Taipei.
+    expect(answeredBy()).toEqual(taipeiMinute >= 23 * 60 + 59 ? ["defaultrule123"] : []);
   });
 });

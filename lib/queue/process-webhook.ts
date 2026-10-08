@@ -11,6 +11,7 @@ import {
   parseStoryMentionEvents,
 } from '@/lib/meta/webhook';
 import { recordEcho } from '@/lib/ops/human-pause';
+import { recordContacts, type ContactTouch } from '@/lib/contacts/record';
 
 /** BullMQ job ids reject ":"; base64url keeps distinct mids distinct. */
 const midKey = (mid: string) => Buffer.from(mid).toString('base64url');
@@ -88,7 +89,9 @@ export async function processInstagramWebhook({ payload: incoming, provider, wor
       // Buttons that answer with a module or a DM rule (card buttons, ice
       // breakers) have their own handler.
       if (isDmActionPayload(event.payload)) {
-        const mid = event.mid ?? `${event.userId}:${event.payload}:${Date.now()}`;
+        // Without a mid, the tap's own timestamp keeps redeliveries of this webhook
+        // on the same job id (Date.now() would turn each into a new send).
+        const mid = event.mid ?? `${event.userId}:${event.payload}:${event.timestamp ?? webhookEvent.id}`;
         await queue.add(
           DM_ACTION_JOB_NAME,
           {
@@ -123,7 +126,8 @@ export async function processInstagramWebhook({ payload: incoming, provider, wor
     }
 
     // Quick-reply taps → the module or rule they point at.
-    for (const event of parseQuickReplyEvents(payload as Parameters<typeof parseQuickReplyEvents>[0])) {
+    const quickReplyEvents = parseQuickReplyEvents(payload as Parameters<typeof parseQuickReplyEvents>[0]);
+    for (const event of quickReplyEvents) {
       if (!accountMap.has(event.instagramAccountId)) continue;
       await queue.add(
         DM_ACTION_JOB_NAME,
@@ -140,7 +144,8 @@ export async function processInstagramWebhook({ payload: incoming, provider, wor
     }
 
     // Story mentions → the account's story-mention rule, if any.
-    for (const event of parseStoryMentionEvents(payload as Parameters<typeof parseStoryMentionEvents>[0])) {
+    const storyMentionEvents = parseStoryMentionEvents(payload as Parameters<typeof parseStoryMentionEvents>[0]);
+    for (const event of storyMentionEvents) {
       if (!accountMap.has(event.instagramAccountId)) continue;
       await queue.add(
         DM_ACTION_JOB_NAME,
@@ -159,7 +164,7 @@ export async function processInstagramWebhook({ payload: incoming, provider, wor
     for (const event of parseEchoEvents(payload as Parameters<typeof parseEchoEvents>[0])) {
       const account = accountMap.get(event.instagramAccountId);
       if (!account) continue;
-      await recordEcho(event.instagramAccountId, event.userId, account.humanPauseMinutes).catch(
+      await recordEcho(event.instagramAccountId, event.userId, account.humanPauseMinutes, event.mid).catch(
         (error) => console.warn('[Webhook] Echo not recorded:', String(error))
       );
     }
@@ -252,6 +257,20 @@ export async function processInstagramWebhook({ payload: incoming, provider, wor
         );
       }
     }
+
+    // Contacts: who commented, and who messaged (which opens the 24-hour window).
+    const touches: ContactTouch[] = [];
+    const touch = (instagramId: string, userId: string, kind: ContactTouch['kind'], username?: string) => {
+      const account = accountMap.get(instagramId);
+      if (!account || !userId || userId === instagramId) return;
+      touches.push({ workspaceId: account.workspaceId, instagramAccountId: account.id, userId, username, kind });
+    };
+    for (const e of commentEvents) touch(e.instagramAccountId, e.commenterId, 'comment', e.commenterName);
+    for (const e of postbackEvents) touch(e.instagramAccountId, e.userId, 'inbound');
+    for (const e of quickReplyEvents) touch(e.instagramAccountId, e.userId, 'inbound');
+    for (const e of storyMentionEvents) touch(e.instagramAccountId, e.userId, 'inbound');
+    for (const e of messageEvents) touch(e.instagramAccountId, e.senderId, 'inbound');
+    await recordContacts(touches);
 
     await prisma.webhookEvent.update({
       where: { id: webhookEvent.id },

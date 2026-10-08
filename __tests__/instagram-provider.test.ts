@@ -1,4 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+// Sends remember their message ids in Redis; not under test here.
+vi.mock("@/lib/ops/human-pause", () => ({
+  markAutomatedSend: vi.fn(),
+  rememberSentMid: vi.fn(),
+}));
 vi.mock("@/lib/db/client", () => ({
   prisma: { zernioConnection: { findUnique: vi.fn() } },
 }));

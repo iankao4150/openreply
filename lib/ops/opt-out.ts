@@ -10,7 +10,7 @@ const STOP_WORDS = new Set(["stop", "unsubscribe", "停止", "取消訂閱", "�
 const START_WORDS = new Set(["start", "subscribe", "開始", "恢復", "恢復訂閱"]);
 
 export const OPT_OUT_CONFIRMATION =
-  "已停止自動訊息，之後不會再收到自動回覆。想恢復請傳「開始」。\nYou won't get automated messages anymore. Send START to turn them back on.";
+  "已停止自動訊息，之後只有在你點選單或按鈕時才會回覆。想恢復請傳「開始」。\nAutomated messages are off; you'll only get a reply when you tap a menu item or button. Send START to turn them back on.";
 export const OPT_IN_CONFIRMATION = "已恢復自動訊息 👍\nAutomated messages are back on.";
 
 export function optOutCommand(text: string): "stop" | "start" | null {
@@ -23,22 +23,26 @@ export function optOutCommand(text: string): "stop" | "start" | null {
   return null;
 }
 
-export async function isOptedOut(instagramAccountDbId: string, userId: string) {
+// Keyed by the Instagram account id, not our row id, so an opt-out survives
+// disconnecting and reconnecting the account.
+export async function isOptedOut(instagramId: string, userId: string) {
   const row = await prisma.dmOptOut.findUnique({
-    where: { instagramAccountId_userId: { instagramAccountId: instagramAccountDbId, userId } },
+    where: { instagramId_userId: { instagramId, userId } },
     select: { id: true },
   });
   return Boolean(row);
 }
 
-export async function setOptOut(instagramAccountDbId: string, userId: string, optedOut: boolean) {
+/** Record the choice. True when it changed something (START from someone opted in does not). */
+export async function setOptOut(instagramId: string, userId: string, optedOut: boolean): Promise<boolean> {
   if (optedOut) {
     await prisma.dmOptOut.upsert({
-      where: { instagramAccountId_userId: { instagramAccountId: instagramAccountDbId, userId } },
-      create: { instagramAccountId: instagramAccountDbId, userId },
+      where: { instagramId_userId: { instagramId, userId } },
+      create: { instagramId, userId },
       update: {},
     });
-  } else {
-    await prisma.dmOptOut.deleteMany({ where: { instagramAccountId: instagramAccountDbId, userId } });
+    return true;
   }
+  const removed = await prisma.dmOptOut.deleteMany({ where: { instagramId, userId } });
+  return removed.count > 0;
 }

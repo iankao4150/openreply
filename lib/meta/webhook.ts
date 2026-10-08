@@ -72,6 +72,7 @@ interface WebhookEntry {
     };
   }>;
   messaging?: Array<{
+    timestamp?: number;
     sender?: { id?: string };
     recipient?: { id?: string };
     postback?: { mid?: string; title?: string; payload?: string };
@@ -100,6 +101,8 @@ export interface WebhookPostbackEvent {
   userId: string;
   payload: string;
   mid?: string;
+  /** When the tap happened (ms), the same on every redelivery of the webhook. */
+  timestamp?: number;
 }
 
 export interface WebhookReadEvent {
@@ -188,6 +191,7 @@ export function parsePostbackEvents(
         userId,
         payload: postbackPayload,
         mid: messaging.postback?.mid,
+        ...(typeof messaging.timestamp === "number" ? { timestamp: messaging.timestamp } : {}),
       });
     }
   }
@@ -338,6 +342,7 @@ export interface WebhookEchoEvent {
   instagramAccountId: string;
   /** The person the account's message went to. */
   userId: string;
+  mid?: string;
 }
 
 /** Messages the account itself sent: our own automated ones, or a person's. */
@@ -350,7 +355,7 @@ export function parseEchoEvents(payload: WebhookPayload): WebhookEchoEvent[] {
       const accountId = entry.id ?? messaging.sender?.id;
       const userId = messaging.recipient?.id;
       if (!accountId || !userId || userId === accountId) continue;
-      events.push({ instagramAccountId: accountId, userId });
+      events.push({ instagramAccountId: accountId, userId, ...(messaging.message.mid ? { mid: messaging.message.mid } : {}) });
     }
   }
   return events;

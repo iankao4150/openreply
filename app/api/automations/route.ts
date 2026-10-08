@@ -22,8 +22,11 @@ import {
 } from "@/lib/campaigns/conflicts";
 import { parseStoredCards } from "@/lib/modules/schema";
 import { MAX_ICE_BREAKERS, syncIceBreakers } from "@/lib/campaigns/ice-breakers";
+import { normalizeTags } from "@/lib/contacts/record";
 
-const DM_RULE_TYPES = ["KEYWORD", "STORY_MENTION", "ICE_BREAKER"] as const;
+const DM_RULE_TYPES = ["KEYWORD", "DEFAULT", "STORY_MENTION", "ICE_BREAKER"] as const;
+const tagsSchema = z.array(z.string().trim().min(1).max(30)).max(10);
+const hoursModeSchema = z.enum(["ALWAYS", "OPEN", "CLOSED"]);
 const optionalDate = z
   .union([z.string().datetime({ offset: true }), z.literal(""), z.null()])
   .optional()
@@ -63,6 +66,8 @@ const createAutomationSchema = z
     cooldownMinutes: z.number().int().min(0).max(10080).optional().default(0),
     commentReplyStyle: z.enum(["CARDS", "TEXT_FIRST"]).optional().default("CARDS"),
     textOpener: z.string().trim().max(1000).optional().nullable(),
+    addTags: tagsSchema.optional().default([]),
+    hoursMode: hoursModeSchema.optional().default("ALWAYS"),
     openingDmEnabled: z.boolean().optional().default(false),
     openingDmMessage: z.string().max(1000).optional().nullable(),
     openingDmButtonLabel: z.string().max(64).optional().nullable(),
@@ -153,6 +158,8 @@ const updateAutomationSchema = z.object({
   cooldownMinutes: z.number().int().min(0).max(10080).optional(),
   commentReplyStyle: z.enum(["CARDS", "TEXT_FIRST"]).optional(),
   textOpener: z.string().trim().max(1000).optional().nullable(),
+  addTags: tagsSchema.optional(),
+  hoursMode: hoursModeSchema.optional(),
   openingDmEnabled: z.boolean().optional(),
   openingDmMessage: z.string().max(1000).optional().nullable(),
   openingDmButtonLabel: z.string().max(64).optional().nullable(),
@@ -265,7 +272,9 @@ export async function GET(request: NextRequest) {
   const [statusCounts, clickRows, keywordCounts, moduleClickRows] = await Promise.all([
     prisma.dmLog.groupBy({
       by: ["automationId", "status"],
-      where: { workspaceId },
+      // Replies to taps on a campaign's own buttons are follow-through, not new
+      // reach; counting them would shrink the campaign's click rate.
+      where: { workspaceId, NOT: { commentId: { startsWith: "tap:" } } },
       _count: { _all: true },
     }),
     prisma.linkClick.findMany({
@@ -511,6 +520,9 @@ export async function POST(request: NextRequest) {
       cooldownMinutes: parsed.data.cooldownMinutes,
       commentReplyStyle: parsed.data.commentReplyStyle,
       textOpener: parsed.data.textOpener || null,
+      addTags: normalizeTags(parsed.data.addTags),
+      // Business hours apply to DM rules; a comment campaign answers any time.
+      hoursMode: dmOnly ? parsed.data.hoursMode : "ALWAYS",
       openingDmEnabled,
       openingDmMessage: openingDmEnabled
         ? parsed.data.openingDmMessage || null
@@ -682,6 +694,8 @@ export async function PATCH(request: NextRequest) {
   } else {
     automationData.iceBreakerQuestion = undefined;
   }
+  if (automationData.addTags !== undefined) automationData.addTags = normalizeTags(automationData.addTags);
+  if (!existing.dmOnly) automationData.hoursMode = undefined;
   if (existing.dmOnly && existing.dmRuleType !== "KEYWORD") {
     automationData.keywords = [];
     automationData.matchAnyWord = false;

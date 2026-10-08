@@ -1,4 +1,5 @@
 import { getMetaGraphApiVersion, requireEnv, usesFacebookLogin } from "@/lib/env";
+import { fitUtf8 } from "@/lib/utils/utf8";
 
 function instagramGraphBase() {
   // With Facebook Login the same Instagram edges live on graph.facebook.com and
@@ -187,7 +188,7 @@ export async function sendPrivateReply(
       },
       body: JSON.stringify({
         recipient: { comment_id: commentId },
-        message: { text: message },
+        message: { text: fitUtf8(message) },
       }),
     }
   );
@@ -384,7 +385,7 @@ export async function sendDirectMessage(
       },
       body: JSON.stringify({
         recipient: { id: userId },
-        message: { text: message },
+        message: { text: fitUtf8(message) },
       }),
     }
   );
@@ -490,7 +491,7 @@ export async function sendDirectMessageWithQuickReplies(
       headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
       body: JSON.stringify({
         recipient: { id: userId },
-        message: { text: text.slice(0, 1000), quick_replies: quickReplies.slice(0, 13) },
+        message: { text: fitUtf8(text), quick_replies: quickReplies.slice(0, 13) },
       }),
     }
   );

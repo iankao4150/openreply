@@ -1,6 +1,10 @@
 import { prisma } from "@/lib/db/client";
 import { decryptToken } from "@/lib/meta/oauth";
-import { deleteInstagramIceBreakers, setInstagramIceBreakers } from "@/lib/meta/client";
+import {
+  deleteInstagramIceBreakers,
+  deleteInstagramPersistentMenu,
+  setInstagramIceBreakers,
+} from "@/lib/meta/client";
 
 export const MAX_ICE_BREAKERS = 4;
 
@@ -54,5 +58,29 @@ export async function syncIceBreakers(instagramAccountDbId: string): Promise<str
       })
       .catch(() => {});
     return message;
+  }
+}
+
+/**
+ * Before an account is disconnected: take its ice breakers and DM menu off
+ * Instagram, since nothing will answer them anymore. Best effort.
+ */
+export async function clearMessengerProfile(account: {
+  provider: string;
+  accessToken: string | null;
+  persistentMenu: unknown;
+  automations: { id: string }[];
+}): Promise<void> {
+  if (account.provider !== "META" || !account.accessToken) return;
+  const hasMenu = Array.isArray(account.persistentMenu) && account.persistentMenu.length > 0;
+  if (!hasMenu && account.automations.length === 0) return;
+  try {
+    const token = decryptToken(account.accessToken);
+    await Promise.allSettled([
+      account.automations.length ? deleteInstagramIceBreakers(token) : null,
+      hasMenu ? deleteInstagramPersistentMenu(token) : null,
+    ]);
+  } catch (error) {
+    console.warn("[Ice breakers] Not cleared on disconnect:", String(error));
   }
 }

@@ -82,6 +82,7 @@ export async function reconcileComments(): Promise<void> {
       wholeWordMatch: true,
       publicReplyEnabled: true,
       workspaceId: true,
+      startsAt: true,
       instagramAccount: {
         select: {
           id: true,
@@ -102,7 +103,8 @@ export async function reconcileComments(): Promise<void> {
   for (const automation of automations) {
     const stat = await sweepCampaign({
       automation: automation,
-      sinceMs: sinceMs,
+      // A scheduled campaign answers only comments written after it started.
+      sinceMs: Math.max(sinceMs, automation.startsAt?.getTime() ?? 0),
       tokenCache: tokenCache,
     }).catch(
       (error): SweepStat => ({

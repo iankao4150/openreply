@@ -12,6 +12,9 @@ export interface ConflictCandidate {
   matchAnyWord: boolean;
   keywords: string[];
   dmTriggerEnabled: boolean;
+  startsAt?: Date | string | null;
+  endsAt?: Date | string | null;
+  hoursMode?: string;
 }
 
 export interface CampaignConflict {
@@ -19,9 +22,10 @@ export interface CampaignConflict {
   otherName: string;
   /**
    * "comment": both answer the same comments; "dm": both answer the same DMs;
-   * "story": two rules answer story mentions (only the oldest is used).
+   * "story": two rules answer story mentions (only the oldest is used);
+   * "default": two default replies (only the oldest is used).
    */
-  kind: "comment" | "dm" | "story";
+  kind: "comment" | "dm" | "story" | "default";
 }
 
 function normalize(keyword: string): string {
@@ -49,6 +53,18 @@ function answersDms(c: ConflictCandidate) {
 }
 
 const isStoryRule = (c: ConflictCandidate) => c.dmOnly && c.dmRuleType === "STORY_MENTION";
+const isDefaultRule = (c: ConflictCandidate) => c.dmOnly && c.dmRuleType === "DEFAULT";
+
+const time = (value: Date | string | null | undefined) => (value ? new Date(value).getTime() : null);
+
+/** Whether the two can be live at the same moment (schedule and business hours). */
+function liveTogether(a: ConflictCandidate, b: ConflictCandidate) {
+  const [aStart, aEnd, bStart, bEnd] = [time(a.startsAt), time(a.endsAt), time(b.startsAt), time(b.endsAt)];
+  if (aEnd !== null && bStart !== null && aEnd <= bStart) return false;
+  if (bEnd !== null && aStart !== null && bEnd <= aStart) return false;
+  const modes = new Set([a.hoursMode ?? "ALWAYS", b.hoursMode ?? "ALWAYS"]);
+  return !(modes.has("OPEN") && modes.has("CLOSED"));
+}
 
 function postsOverlap(a: ConflictCandidate, b: ConflictCandidate) {
   return a.matchAnyPost || b.matchAnyPost || (Boolean(a.postId) && a.postId === b.postId);
@@ -56,9 +72,9 @@ function postsOverlap(a: ConflictCandidate, b: ConflictCandidate) {
 
 /**
  * Active campaigns that would answer the same comment or DM as `target`.
- * Instagram allows one private reply per comment, so on a comment only the
- * oldest campaign's DM goes out; on a DM every match sends, and the person
- * gets several messages. Either way it is almost never intended.
+ * Instagram allows one private reply per comment, and a DM gets one reply, so
+ * only the oldest matching campaign answers and the others never do — almost
+ * never what was intended.
  */
 export function findConflicts(
   target: ConflictCandidate,
@@ -69,6 +85,13 @@ export function findConflicts(
   for (const other of others) {
     if (other.id === target.id || !other.isActive) continue;
     if (other.instagramAccountId !== target.instagramAccountId) continue;
+    if (!liveTogether(target, other)) continue;
+    if (isDefaultRule(target) || isDefaultRule(other)) {
+      if (isDefaultRule(target) && isDefaultRule(other)) {
+        conflicts.push({ otherId: other.id, otherName: other.name, kind: "default" });
+      }
+      continue;
+    }
     if (isStoryRule(target) && isStoryRule(other)) {
       conflicts.push({ otherId: other.id, otherName: other.name, kind: "story" });
       continue;
@@ -96,4 +119,7 @@ export const CONFLICT_CANDIDATE_SELECT = {
   matchAnyWord: true,
   keywords: true,
   dmTriggerEnabled: true,
+  startsAt: true,
+  endsAt: true,
+  hoursMode: true,
 } as const;

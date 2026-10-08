@@ -1,8 +1,10 @@
+import { fitUtf8 } from "@/lib/utils/utf8";
 import { renderMessageWithoutLink } from "@/lib/tracking/message";
 import {
   CARD_SUBTITLE_MAX,
   CARD_TITLE_MAX,
   MAX_CARDS,
+  cardKeyOf,
   moduleActionPayload,
   type ModuleCard,
   type ModuleQuickReply,
@@ -13,6 +15,7 @@ import {
 export interface SentModuleLink {
   slug: string;
   card: number;
+  cardKey?: string | null;
   slot: string;
 }
 
@@ -61,11 +64,14 @@ function personalize(text: string, context: RenderContext): string {
 function slotUrl(
   links: SentModuleLink[],
   card: number,
+  cardKey: string,
   slot: ModuleSlot,
   fallback: string,
   context: RenderContext
 ): string {
-  const link = links.find((l) => l.card === card && l.slot === slot);
+  const link =
+    links.find((l) => l.cardKey === cardKey && l.slot === slot) ??
+    links.find((l) => !l.cardKey && l.card === card && l.slot === slot);
   return link ? moduleLinkUrl(link.slug, context) : fallback;
 }
 
@@ -77,6 +83,7 @@ export function buildCardElements(
 ): CardElement[] {
   return cards.slice(0, MAX_CARDS).map((card, index) => {
     const number = index + 1;
+    const cardKey = cardKeyOf(card, index);
     const element: CardElement = {
       title: personalize(card.title, context).slice(0, CARD_TITLE_MAX),
     };
@@ -87,7 +94,7 @@ export function buildCardElements(
     if (card.imageLinkUrl) {
       element.default_action = {
         type: "web_url",
-        url: slotUrl(links, number, "img", card.imageLinkUrl, context),
+        url: slotUrl(links, number, cardKey, "img", card.imageLinkUrl, context),
       };
     }
     if (card.buttons.length > 0) {
@@ -100,7 +107,7 @@ export function buildCardElements(
         return {
           type: "web_url",
           title,
-          url: slotUrl(links, number, `btn${buttonIndex + 1}` as ModuleSlot, button.url ?? "", context),
+          url: slotUrl(links, number, cardKey, `btn${buttonIndex + 1}` as ModuleSlot, button.url ?? "", context),
         };
       });
     }
@@ -149,7 +156,7 @@ export function buildCardsPlainText(
     const url = (firstLink?.type === "web_url" ? firstLink.url : undefined) ?? element.default_action?.url;
     lines.push(url ? `${element.title}\n${url}` : element.title);
   }
-  return lines.join("\n\n").slice(0, 1000);
+  return fitUtf8(lines.join("\n\n"));
 }
 
 /** The module's quick replies as Instagram quick_replies options. */

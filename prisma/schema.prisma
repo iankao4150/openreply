@@ -18,11 +18,11 @@ model User {
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
 
-  accounts          Account[]
-  sessions          Session[]
-  ownedWorkspaces   Workspace[]       @relation("WorkspaceOwner")
-  workspaceMembers  WorkspaceMember[]
-  sentInvitations   WorkspaceInvitation[] @relation("WorkspaceInvitationsSent")
+  accounts         Account[]
+  sessions         Session[]
+  ownedWorkspaces  Workspace[]           @relation("WorkspaceOwner")
+  workspaceMembers WorkspaceMember[]
+  sentInvitations  WorkspaceInvitation[] @relation("WorkspaceInvitationsSent")
 }
 
 model Account {
@@ -80,6 +80,9 @@ model Workspace {
   invitations       WorkspaceInvitation[]
   instagramAccounts InstagramAccount[]
   automations       Automation[]
+  contacts          Contact[]
+  broadcasts        Broadcast[]
+  giveawayDraws     GiveawayDraw[]
   dmLogs            DmLog[]
   trackedLinks      TrackedLink[]
   linkClicks        LinkClick[]
@@ -129,9 +132,9 @@ model WorkspaceInvitation {
 }
 
 model InstagramAccount {
-  id                String   @id @default(cuid())
+  id                String            @id @default(cuid())
   workspaceId       String
-  instagramId       String   @unique
+  instagramId       String            @unique
   username          String
   name              String?
   provider          InstagramProvider @default(META)
@@ -144,20 +147,26 @@ model InstagramAccount {
   accessExpiresAt   DateTime?
   // Minutes automated DM replies stay quiet in a conversation after someone
   // replies by hand (in the Instagram app or the inbox). 0 turns it off.
-  humanPauseMinutes Int      @default(30)
+  humanPauseMinutes Int               @default(30)
   // Persistent menu in the DM composer: [{title, url?, moduleId?}], max 5.
-  persistentMenu    Json     @default("[]")
+  persistentMenu    Json              @default("[]")
   // Comments containing any of these are hidden automatically (spam, scams).
-  hideCommentWords  String[] @default([])
-  webhookSubscribed Boolean  @default(false)
-  connectedAt       DateTime @default(now())
-  updatedAt         DateTime @updatedAt
+  hideCommentWords  String[]          @default([])
+  // Opening hours for DM rules that only answer inside or outside them:
+  // {timezone, days: 0-6 (Sunday = 0), open: "HH:MM", close: "HH:MM"}.
+  businessHours     Json              @default("{}")
+  webhookSubscribed Boolean           @default(false)
+  connectedAt       DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
 
-  workspace   Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  automations Automation[]
-  dmLogs      DmLog[]
-  linkClicks  LinkClick[]
+  workspace         Workspace          @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  automations       Automation[]
+  dmLogs            DmLog[]
+  linkClicks        LinkClick[]
   followerSnapshots FollowerSnapshot[]
+  contacts          Contact[]
+  broadcasts        Broadcast[]
+  giveawayDraws     GiveawayDraw[]
 
   @@index([workspaceId])
 }
@@ -183,73 +192,79 @@ model FollowerSnapshot {
 }
 
 model Automation {
-  id                 String   @id @default(cuid())
+  id                 String @id @default(cuid())
   workspaceId        String
   instagramAccountId String
 
-  name           String
-  goal           String?
-  postId         String?
-  postUrl        String?
-  pendingNextReel Boolean @default(false)
-  matchAnyPost   Boolean @default(false)
-  keywords       String[]
-  matchAnyWord   Boolean @default(false)
+  name                    String
+  goal                    String?
+  postId                  String?
+  postUrl                 String?
+  pendingNextReel         Boolean   @default(false)
+  matchAnyPost            Boolean   @default(false)
+  keywords                String[]
+  matchAnyWord            Boolean   @default(false)
   // Also fire this campaign when someone sends a DM whose text matches the
   // keywords above. Independent of the post trigger — a DM has no media, so
   // postId / matchAnyPost do not apply to it.
-  dmTriggerEnabled Boolean @default(false)
-  dmMessage      String
-  openingDmEnabled     Boolean @default(false)
-  openingDmMessage     String?
-  openingDmButtonLabel String?
-  linkButtonLabel      String?
-  requireFollow           Boolean @default(false)
+  dmTriggerEnabled        Boolean   @default(false)
+  dmMessage               String
+  openingDmEnabled        Boolean   @default(false)
+  openingDmMessage        String?
+  openingDmButtonLabel    String?
+  linkButtonLabel         String?
+  requireFollow           Boolean   @default(false)
   followPromptMessage     String?
   followPromptButtonLabel String?
-  followUpEnabled Boolean @default(false)
-  followUpMessage String?
+  followUpEnabled         Boolean   @default(false)
+  followUpMessage         String?
   // Minutes to wait after the link is delivered before sending the follow-up.
   // 0 sends it right away.
-  followUpDelayMinutes Int @default(0)
+  followUpDelayMinutes    Int       @default(0)
   // Reply with a reusable message module (carousel cards) instead of dmMessage.
   // dmMessage is kept as the plain-text fallback if Meta refuses the cards.
-  messageModuleId String?
+  messageModuleId         String?
   // A DM rule: triggered only by DMs, never bound to a post.
-  dmOnly Boolean @default(false)
+  dmOnly                  Boolean   @default(false)
   // What triggers a DM rule: KEYWORD (a DM containing a keyword),
   // STORY_MENTION (someone mentions the account in their story) or
   // ICE_BREAKER (a tap on one of the conversation-starter questions).
-  dmRuleType String @default("KEYWORD")
+  // DEFAULT answers a DM no keyword rule matched.
+  dmRuleType              String    @default("KEYWORD")
   // The question shown for an ICE_BREAKER rule (max 4 per account).
-  iceBreakerQuestion String?
+  iceBreakerQuestion      String?
   // Optional schedule. Outside [startsAt, endsAt) nothing new is answered;
   // button taps on replies already sent still work.
-  startsAt DateTime?
-  endsAt   DateTime?
+  startsAt                DateTime?
+  endsAt                  DateTime?
   // Answer each person once per campaign; later comments or DMs are skipped.
-  oncePerUser Boolean @default(false)
+  oncePerUser             Boolean   @default(false)
   // DM-triggered replies: minutes before the same person can trigger it again.
-  cooldownMinutes Int @default(0)
+  cooldownMinutes         Int       @default(0)
   // How a module answers a comment: CARDS sends the carousel as the private
   // reply; TEXT_FIRST sends textOpener as plain text and the cards once the
   // person replies (plain text reaches people who do not follow the account,
   // where Instagram may refuse templates).
-  commentReplyStyle String @default("CARDS")
-  textOpener        String?
-  publicReplyEnabled Boolean @default(false)
-  publicReplyMessage String?
-  publicReplyMessages String[] @default([])
-  isActive       Boolean @default(true)
-  wholeWordMatch Boolean @default(true)
-  reportShareSlug    String? @unique
-  reportShareEnabled Boolean @default(true)
+  commentReplyStyle       String    @default("CARDS")
+  textOpener              String?
+  // Tags added to the person's contact whenever this campaign or rule answers.
+  addTags                 String[]  @default([])
+  // DM rules: ALWAYS, OPEN (only inside the account's business hours) or
+  // CLOSED (only outside them, an away message).
+  hoursMode               String    @default("ALWAYS")
+  publicReplyEnabled      Boolean   @default(false)
+  publicReplyMessage      String?
+  publicReplyMessages     String[]  @default([])
+  isActive                Boolean   @default(true)
+  wholeWordMatch          Boolean   @default(true)
+  reportShareSlug         String?   @unique
+  reportShareEnabled      Boolean   @default(true)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  workspace        Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
-  instagramAccount InstagramAccount @relation(fields: [instagramAccountId], references: [id], onDelete: Cascade)
+  workspace        Workspace         @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  instagramAccount InstagramAccount  @relation(fields: [instagramAccountId], references: [id], onDelete: Cascade)
   dmLogs           DmLog[]
   trackedLinks     TrackedLink[]
   linkClicks       LinkClick[]
@@ -263,28 +278,28 @@ model Automation {
 }
 
 model DmLog {
-  id                 String     @id @default(cuid())
+  id                 String @id @default(cuid())
   workspaceId        String
   automationId       String
   instagramAccountId String
 
-  commenterId   String
-  commenterName String?
-  commentText   String
-  commentId     String
+  commenterId    String
+  commenterName  String?
+  commentText    String
+  commentId      String
   matchedKeyword String?
-  status        DmStatus @default(PENDING)
-  attempts      Int      @default(0)
-  dmSentAt      DateTime?
-  errorMessage  String?
+  status         DmStatus  @default(PENDING)
+  attempts       Int       @default(0)
+  dmSentAt       DateTime?
+  errorMessage   String?
 
   // The public comment reply is delivered independently of the DM, so its
   // outcome is tracked separately. publicReplySentAt makes it idempotent across
   // retries; a DM failure never blocks or re-posts the public reply.
-  dmDeliveryUnconfirmed Boolean @default(false)
-  publicReplyDeliveryUnconfirmed Boolean @default(false)
-  publicReplySentAt DateTime?
-  publicReplyError  String?
+  dmDeliveryUnconfirmed          Boolean   @default(false)
+  publicReplyDeliveryUnconfirmed Boolean   @default(false)
+  publicReplySentAt              DateTime?
+  publicReplyError               String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -364,14 +379,14 @@ model LinkClick {
 }
 
 model WebhookEvent {
-  id          String        @id @default(cuid())
-  workspaceId String?
-  object      String?
-  payload     Json
-  status      WebhookStatus @default(PENDING)
+  id           String        @id @default(cuid())
+  workspaceId  String?
+  object       String?
+  payload      Json
+  status       WebhookStatus @default(PENDING)
   errorMessage String?
-  createdAt   DateTime      @default(now())
-  processedAt DateTime?
+  createdAt    DateTime      @default(now())
+  processedAt  DateTime?
 
   workspace Workspace? @relation(fields: [workspaceId], references: [id], onDelete: SetNull)
 
@@ -380,13 +395,13 @@ model WebhookEvent {
 }
 
 model OperationalEvent {
-  id          String                @id @default(cuid())
+  id          String                 @id @default(cuid())
   workspaceId String?
   source      OperationalEventSource
-  level       OperationalEventLevel @default(INFO)
+  level       OperationalEventLevel  @default(INFO)
   message     String
   payload     Json?
-  createdAt   DateTime              @default(now())
+  createdAt   DateTime               @default(now())
   resolvedAt  DateTime?
 
   workspace Workspace? @relation(fields: [workspaceId], references: [id], onDelete: SetNull)
@@ -439,54 +454,54 @@ enum OperationalEventLevel {
   ERROR
 }
 
-
 enum InstagramProvider {
   META
   ZERNIO
 }
 
 model ZernioConnection {
-  workspaceId    String @id
-  apiKey         String
-  profileId      String?
-  webhookId      String?
-  webhookSecret  String
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
-  workspace      Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  workspaceId   String    @id
+  apiKey        String
+  profileId     String?
+  webhookId     String?
+  webhookSecret String
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  workspace     Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
 }
 
 // Claims persist independently of BullMQ retention so old taps never resend.
 model PostbackDelivery {
-  id String @id
+  id        String   @id
   createdAt DateTime @default(now())
 }
 
 // A reusable reply: an optional lead-in text plus 1–10 carousel cards, sent as
 // an Instagram generic template. Campaigns and DM keyword rules point at it.
 model MessageModule {
-  id          String   @id @default(cuid())
-  workspaceId String
-  name        String
+  id               String   @id @default(cuid())
+  workspaceId      String
+  name             String
   // Sent as its own message before the cards, only where a conversation is
   // already open (DM triggers, button taps). A comment's private reply is a
   // single message, so there the cards go alone.
-  introText   String?
+  introText        String?
   // ModuleCard[] — see lib/modules/schema.ts.
-  cards       Json
+  cards            Json
   // QuickReply[] (title + moduleId): chips under the reply that send another
   // module when tapped. Only offered where a conversation is open.
-  quickReplies Json    @default("[]")
+  quickReplies     Json     @default("[]")
   // The short message the quick replies are attached to, sent after the cards.
   quickReplyPrompt String?
-  utmSource   String   @default("openreply")
-  utmMedium   String   @default("dm")
-  utmCampaign String?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  utmSource        String   @default("openreply")
+  utmMedium        String   @default("dm")
+  utmCampaign      String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
 
   workspace   Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   automations Automation[]
+  broadcasts  Broadcast[]
   links       ModuleLink[]
 
   @@index([workspaceId])
@@ -495,22 +510,29 @@ model MessageModule {
 // One tracked redirect per card image and card button, so clicks are counted
 // per slot. Synced from the module's cards on every save.
 model ModuleLink {
-  id             String   @id @default(cuid())
+  id             String    @id @default(cuid())
   workspaceId    String
   moduleId       String
-  slug           String   @unique
-  // 1-based card number and "img" | "btn1" | "btn2" | "btn3".
+  slug           String    @unique
+  // 1-based card number (position at the last save) and "img" | "btn1" |
+  // "btn2" | "btn3".
   card           Int
   slot           String
+  // The card's stable id (ModuleCard.id): links follow the card, not its
+  // position. Null on links saved before cards had ids.
+  cardKey        String?
   destinationUrl String
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  // Set when the card or button is removed. The link keeps redirecting, since
+  // DMs already sent still point at it, but new sends no longer use it.
+  retiredAt      DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
 
   workspace Workspace         @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   module    MessageModule     @relation(fields: [moduleId], references: [id], onDelete: Cascade)
   clicks    ModuleLinkClick[]
 
-  @@unique([moduleId, card, slot])
+  @@index([moduleId, retiredAt])
   @@index([workspaceId])
 }
 
@@ -537,11 +559,103 @@ model ModuleLinkClick {
 // People who asked to stop automated DMs (by sending STOP or similar). They get
 // no automated message from the account until they send START.
 model DmOptOut {
-  id                 String   @id @default(cuid())
+  id          String   @id @default(cuid())
+  /// The Instagram account id (stable across reconnects), not InstagramAccount.id.
+  instagramId String
+  userId      String
+  createdAt   DateTime @default(now())
+
+  @@unique([instagramId, userId])
+  @@index([instagramId])
+}
+
+/// A person who interacted with an account: commented on a post the account
+/// watches, messaged it, tapped a button or mentioned it in a story.
+model Contact {
+  id                 String    @id @default(cuid())
+  workspaceId        String
   instagramAccountId String
+  /// Instagram-scoped user id (IGSID) of the person.
   userId             String
-  createdAt          DateTime @default(now())
+  username           String?
+  tags               String[]  @default([])
+  firstSeenAt        DateTime  @default(now())
+  lastSeenAt         DateTime  @default(now())
+  /// Last DM, button tap or story mention from them. Instagram lets the
+  /// account message a person only within 24 hours of this.
+  lastInboundAt      DateTime?
+  lastCommentAt      DateTime?
+  interactions       Int       @default(1)
+
+  workspace        Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  instagramAccount InstagramAccount @relation(fields: [instagramAccountId], references: [id], onDelete: Cascade)
 
   @@unique([instagramAccountId, userId])
-  @@index([instagramAccountId])
+  @@index([workspaceId])
+  @@index([instagramAccountId, lastInboundAt])
+}
+
+/// One send of a message module to the contacts whose 24-hour window is open.
+model Broadcast {
+  id                 String    @id @default(cuid())
+  workspaceId        String
+  instagramAccountId String
+  messageModuleId    String?
+  name               String
+  /// Only contacts with at least one of these tags; empty means everyone.
+  tags               String[]  @default([])
+  /// QUEUED, SENDING, DONE or CANCELLED.
+  status             String    @default("QUEUED")
+  recipients         Int       @default(0)
+  sent               Int       @default(0)
+  failed             Int       @default(0)
+  skipped            Int       @default(0)
+  createdById        String?
+  createdAt          DateTime  @default(now())
+  startedAt          DateTime?
+  finishedAt         DateTime?
+
+  workspace        Workspace            @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  instagramAccount InstagramAccount     @relation(fields: [instagramAccountId], references: [id], onDelete: Cascade)
+  messageModule    MessageModule?       @relation(fields: [messageModuleId], references: [id], onDelete: SetNull)
+  deliveries       BroadcastRecipient[]
+
+  @@index([workspaceId, createdAt])
+}
+
+/// Per-person outcome of a broadcast, so a retried job never sends twice.
+model BroadcastRecipient {
+  id          String    @id @default(cuid())
+  broadcastId String
+  userId      String
+  /// PENDING, SENT, FAILED or SKIPPED.
+  status      String    @default("PENDING")
+  error       String?
+  sentAt      DateTime?
+
+  broadcast Broadcast @relation(fields: [broadcastId], references: [id], onDelete: Cascade)
+
+  @@unique([broadcastId, userId])
+  @@index([broadcastId, status])
+}
+
+/// A random pick of winners among a post's commenters, kept for the record.
+model GiveawayDraw {
+  id                 String   @id @default(cuid())
+  workspaceId        String
+  instagramAccountId String
+  mediaId            String
+  permalink          String?
+  /// The rules used: keyword, winners, minMentions, excluded usernames.
+  settings           Json
+  entrants           Int
+  /// [{username, commentId, text}]
+  winners            Json
+  createdById        String?
+  createdAt          DateTime @default(now())
+
+  workspace        Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  instagramAccount InstagramAccount @relation(fields: [instagramAccountId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId, createdAt])
 }

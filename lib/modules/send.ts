@@ -1,3 +1,7 @@
+import {
+  DeliveryUnconfirmedError,
+  isDeliveryUnconfirmed,
+} from "@/lib/instagram/delivery-errors";
 import { getBaseUrl } from "@/lib/env";
 import {
   CardsUnsupportedError,
@@ -55,7 +59,8 @@ const CONVERSATION_REJECTIONS = [
  */
 export function isCardsRejection(error: unknown): boolean {
   if (error instanceof CardsUnsupportedError) return true;
-  if (error instanceof TokenExpiredError || error instanceof RateLimitError) return false;
+  if (error instanceof TokenExpiredError || error instanceof RateLimitError)
+    return false;
   return (
     error instanceof MetaApiError &&
     /\[code=100 /.test(error.message) &&
@@ -66,7 +71,7 @@ export function isCardsRejection(error: unknown): boolean {
 function renderContext(
   automationId: string,
   recipientId: string,
-  commenterName: string | null | undefined
+  commenterName: string | null | undefined,
 ): RenderContext {
   return {
     baseUrl: getBaseUrl(),
@@ -120,7 +125,10 @@ export async function sendModuleAsPrivateReply({
       return "cards";
     } catch (error) {
       if (!isCardsRejection(error)) throw error;
-      console.log("[Modules] Carousel refused for a private reply, falling back:", String(error));
+      console.log(
+        "[Modules] Carousel refused for a private reply, falling back:",
+        String(error),
+      );
     }
 
     const first = buildFirstCardButtons(cards, module.links, ctx);
@@ -141,7 +149,13 @@ export async function sendModuleAsPrivateReply({
     }
   }
 
-  await sendPrivateReply({ context, instagramAccountId, commentId, message: plain(), postId });
+  await sendPrivateReply({
+    context,
+    instagramAccountId,
+    commentId,
+    message: plain(),
+    postId,
+  });
   return "text";
 }
 
@@ -189,7 +203,10 @@ export async function sendModuleAsDirectMessage({
           message: module.quickReplyPrompt || DEFAULT_QUICK_REPLY_PROMPT,
           commenterName,
         }),
-        quickReplies: buildQuickReplies(replies, renderContext(automationId, userId, commenterName)),
+        quickReplies: buildQuickReplies(
+          replies,
+          renderContext(automationId, userId, commenterName),
+        ),
       });
     } catch (error) {
       // The cards already went out; missing chips must not fail the reply.
@@ -219,54 +236,78 @@ async function sendModuleBody({
   const cards = parseStoredCards(module.cards);
   const ctx = renderContext(automationId, userId, commenterName);
 
-  if (module.introText) {
-    await sendDirectMessage({
-      context,
-      instagramAccountId,
-      userId,
-      message: renderMessageWithoutLink({ message: module.introText, commenterName }),
-    });
-  }
-
-  if (cards.length > 0) {
-    try {
-      await sendDirectMessageWithCards({
-        context,
-        instagramAccountId,
-        userId,
-        elements: buildCardElements(cards, module.links, ctx),
-      });
-      return "cards";
-    } catch (error) {
-      if (!isCardsRejection(error)) throw error;
-      console.log("[Modules] Carousel refused in a DM, falling back:", String(error));
-    }
-
-    const first = buildFirstCardButtons(cards, module.links, ctx);
-    if (first) {
-      try {
-        await sendDirectMessageWithLinkButton({
-          context,
-          instagramAccountId,
-          userId,
-          text: first.text,
-          buttons: first.buttons,
-        });
-        return "button";
-      } catch (error) {
-        if (!isCardsRejection(error)) throw error;
-      }
-    }
-  }
-
-  // The intro already went out, so the plain fallback repeats only the cards.
+  if (!module.introText) return sendCards();
   await sendDirectMessage({
     context,
     instagramAccountId,
     userId,
-    message:
-      buildCardsPlainText(cards, module.links, ctx) ||
-      renderMessageWithoutLink({ message: fallbackText, commenterName }),
+    message: renderMessageWithoutLink({
+      message: module.introText,
+      commenterName,
+    }),
   });
-  return "text";
+  try {
+    return await sendCards();
+  } catch (error) {
+    // The intro is in their inbox: a retry would send it a second time.
+    throw isDeliveryUnconfirmed(error)
+      ? error
+      : new PartialDeliveryError(error);
+  }
+
+  async function sendCards(): Promise<ModuleDelivery> {
+    if (cards.length > 0) {
+      try {
+        await sendDirectMessageWithCards({
+          context,
+          instagramAccountId,
+          userId,
+          elements: buildCardElements(cards, module.links, ctx),
+        });
+        return "cards";
+      } catch (error) {
+        if (!isCardsRejection(error)) throw error;
+        console.log(
+          "[Modules] Carousel refused in a DM, falling back:",
+          String(error),
+        );
+      }
+
+      const first = buildFirstCardButtons(cards, module.links, ctx);
+      if (first) {
+        try {
+          await sendDirectMessageWithLinkButton({
+            context,
+            instagramAccountId,
+            userId,
+            text: first.text,
+            buttons: first.buttons,
+          });
+          return "button";
+        } catch (error) {
+          if (!isCardsRejection(error)) throw error;
+        }
+      }
+    }
+
+    // The intro already went out, so the plain fallback repeats only the cards.
+    await sendDirectMessage({
+      context,
+      instagramAccountId,
+      userId,
+      message:
+        buildCardsPlainText(cards, module.links, ctx) ||
+        renderMessageWithoutLink({ message: fallbackText, commenterName }),
+    });
+    return "text";
+  }
+}
+
+/** Part of a multi-message reply went out; retrying would repeat that part. */
+export class PartialDeliveryError extends DeliveryUnconfirmedError {
+  constructor(error: unknown) {
+    super(error);
+    this.name = "PartialDeliveryError";
+    this.message = `Part of the reply was delivered, so it is not retried. ${error instanceof Error ? error.message : String(error)}`;
+  }
 }
