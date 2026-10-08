@@ -11,6 +11,8 @@ export interface ContactTouch {
 }
 
 const MAX_TAGS = 30;
+// Instagram allows a message only within 24 hours of the person's last one.
+export const MESSAGING_WINDOW_MS = 24 * 60 * 60 * 1000;
 export const TAG_MAX_LENGTH = 30;
 
 /** Trimmed, de-duplicated tags (case-insensitive), capped in count and length. */

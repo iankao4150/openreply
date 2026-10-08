@@ -1,8 +1,9 @@
 "use client";
 
 /**
- * DM auto-replies, three kinds of rule:
+ * DM auto-replies, four kinds of rule:
  * - KEYWORD: a DM or story reply containing one of the words;
+ * - DEFAULT: any DM no keyword rule answered (a welcome or away message);
  * - STORY_MENTION: someone mentions the account in their story;
  * - ICE_BREAKER: a tap on one of up to four questions Instagram shows when
  *   someone opens a new conversation.
@@ -15,12 +16,13 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useI18n } from "@/lib/i18n/provider";
 import { scheduleState } from "@/lib/campaigns/schedule";
 
-type RuleType = "KEYWORD" | "STORY_MENTION" | "ICE_BREAKER";
+type RuleType = "KEYWORD" | "DEFAULT" | "STORY_MENTION" | "ICE_BREAKER";
+type HoursMode = "ALWAYS" | "OPEN" | "CLOSED";
 
 interface Conflict {
   otherId: string;
   otherName: string;
-  kind: "comment" | "dm" | "story";
+  kind: "comment" | "dm" | "story" | "default";
 }
 
 interface Rule {
@@ -36,6 +38,8 @@ interface Rule {
   endsAt: string | null;
   oncePerUser: boolean;
   cooldownMinutes: number;
+  hoursMode: HoursMode;
+  addTags: string[];
   instagramAccountId: string;
   instagramAccount: { username: string };
   messageModule: { id: string; name: string } | null;
@@ -57,6 +61,16 @@ interface AccountOption {
 type ReplyMode = "module" | "text";
 
 const COOLDOWN_CHOICES = [0, 10, 30, 60, 180, 720, 1440];
+// Default replies and story mentions answer a person once a day unless a
+// cooldown is chosen, so "no limit" is not offered for them.
+const usesDailyDefault = (type: RuleType) => type === "DEFAULT" || type === "STORY_MENTION";
+
+function splitList(text: string): string[] {
+  return text
+    .split(/[,，、\n]/)
+    .map((k) => k.trim())
+    .filter(Boolean);
+}
 
 const inputClass =
   "w-full rounded border border-border bg-surface px-3 py-2 text-sm text-foreground placeholder:text-zinc-500 focus:border-accent/40 focus:outline-none";
@@ -97,6 +111,8 @@ export default function DmKeywordsPage() {
   const [oncePerUser, setOncePerUser] = useState(false);
   const [startsAt, setStartsAt] = useState("");
   const [endsAt, setEndsAt] = useState("");
+  const [hoursMode, setHoursMode] = useState<HoursMode>("ALWAYS");
+  const [tagText, setTagText] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [warnings, setWarnings] = useState<Conflict[]>([]);
@@ -126,14 +142,8 @@ export default function DmKeywordsPage() {
     return () => window.clearTimeout(timer);
   }, [load]);
 
-  const keywords = useMemo(
-    () =>
-      keywordText
-        .split(/[,，、\n]/)
-        .map((k) => k.trim())
-        .filter(Boolean),
-    [keywordText]
-  );
+  const keywords = useMemo(() => splitList(keywordText), [keywordText]);
+  const tags = useMemo(() => splitList(tagText), [tagText]);
 
   const activeIceBreakers = rules.filter((r) => r.dmRuleType === "ICE_BREAKER" && r.isActive).length;
 
@@ -145,10 +155,12 @@ export default function DmKeywordsPage() {
     setReplyMode(modules.length > 0 ? "module" : "text");
     setModuleId(modules[0]?.id ?? "");
     setDmText("");
-    setCooldownMinutes(type === "STORY_MENTION" ? 1440 : type === "KEYWORD" ? 30 : 0);
+    setCooldownMinutes(usesDailyDefault(type) ? 1440 : type === "KEYWORD" ? 30 : 0);
     setOncePerUser(false);
     setStartsAt("");
     setEndsAt("");
+    setHoursMode("ALWAYS");
+    setTagText("");
     setError(null);
     setWarnings([]);
   }
@@ -173,6 +185,8 @@ export default function DmKeywordsPage() {
     setOncePerUser(rule.oncePerUser);
     setStartsAt(toLocalInput(rule.startsAt));
     setEndsAt(toLocalInput(rule.endsAt));
+    setHoursMode(rule.hoursMode ?? "ALWAYS");
+    setTagText((rule.addTags ?? []).join(", "));
     setError(null);
     setWarnings([]);
     setFormOpen(true);
@@ -189,6 +203,8 @@ export default function DmKeywordsPage() {
     if (replyMode === "text" && !dmText.trim()) return setError(t("Write the reply text."));
     if (startsAt && endsAt && new Date(endsAt) <= new Date(startsAt))
       return setError(t("The end must be after the start."));
+    if (tags.length > 10 || tags.some((tag) => tag.length > 30))
+      return setError(t("Up to 10 tags, 30 characters each."));
     setSaving(true);
 
     const defaultName =
@@ -196,7 +212,9 @@ export default function DmKeywordsPage() {
         ? keywords.join(" / ")
         : ruleType === "ICE_BREAKER"
           ? question.trim()
-          : t("Story mention reply");
+          : ruleType === "DEFAULT"
+            ? t("Default reply")
+            : t("Story mention reply");
     const payload = {
       name: (name.trim() || defaultName).slice(0, 100),
       keywords: ruleType === "KEYWORD" ? keywords : [],
@@ -207,6 +225,8 @@ export default function DmKeywordsPage() {
       oncePerUser,
       startsAt: ruleType === "ICE_BREAKER" ? null : fromLocalInput(startsAt),
       endsAt: ruleType === "ICE_BREAKER" ? null : fromLocalInput(endsAt),
+      hoursMode: ruleType === "ICE_BREAKER" ? "ALWAYS" : hoursMode,
+      addTags: tags,
     };
     try {
       const res = editingId
@@ -267,7 +287,16 @@ export default function DmKeywordsPage() {
   }
 
   const typeLabel = (type: RuleType) =>
-    type === "KEYWORD" ? t("Keyword") : type === "STORY_MENTION" ? t("Story mention") : t("Ice breaker");
+    type === "KEYWORD"
+      ? t("Keyword")
+      : type === "DEFAULT"
+        ? t("Default reply")
+        : type === "STORY_MENTION"
+          ? t("Story mention")
+          : t("Ice breaker");
+
+  const hoursLabel = (mode: HoursMode) =>
+    mode === "OPEN" ? t("During business hours") : mode === "CLOSED" ? t("Outside business hours") : t("Any time");
 
   const cooldownLabel = (minutes: number) =>
     minutes === 0
@@ -284,7 +313,7 @@ export default function DmKeywordsPage() {
     <div className="space-y-6">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div className="max-w-2xl space-y-1 text-sm text-muted">
-          <p>{t("Reply automatically when someone DMs a keyword, mentions you in their story, or taps one of your conversation-starter questions.")}</p>
+          <p>{t("Reply automatically when someone DMs a keyword, sends anything else (default reply), mentions you in their story, or taps one of your conversation-starter questions.")}</p>
           <p className="text-xs">
             {t("Keywords ignore case and count anywhere in the message. When a person on your team replies by hand, automatic replies to that conversation pause for a while (change it in Settings).")}
           </p>
@@ -309,14 +338,16 @@ export default function DmKeywordsPage() {
             <div className="space-y-2">
               <span className="block text-xs text-muted">{t("Reply when")}</span>
               <div className="flex flex-wrap gap-4 text-sm">
-                {(["KEYWORD", "STORY_MENTION", "ICE_BREAKER"] as RuleType[]).map((type) => (
+                {(["KEYWORD", "DEFAULT", "STORY_MENTION", "ICE_BREAKER"] as RuleType[]).map((type) => (
                   <label key={type} className="flex items-center gap-2">
                     <input type="radio" checked={ruleType === type} onChange={() => resetForm(type)} />
                     {type === "KEYWORD"
                       ? t("someone DMs a keyword")
-                      : type === "STORY_MENTION"
-                        ? t("someone mentions me in their story")
-                        : t("someone taps a conversation-starter question")}
+                      : type === "DEFAULT"
+                        ? t("someone DMs anything no keyword rule answers")
+                        : type === "STORY_MENTION"
+                          ? t("someone mentions me in their story")
+                          : t("someone taps a conversation-starter question")}
                   </label>
                 ))}
               </div>
@@ -355,6 +386,12 @@ export default function DmKeywordsPage() {
                 </div>
               )}
             </label>
+          )}
+
+          {ruleType === "DEFAULT" && (
+            <p className="rounded border border-border bg-surface px-3 py-2 text-xs text-muted">
+              {t("Answers any DM that no keyword rule matched: a welcome message, or an away message if you limit it to outside business hours. Each person gets it at most once per cooldown (once a day by default), and it stays quiet while someone on your team is chatting.")}
+            </p>
           )}
 
           {ruleType === "STORY_MENTION" && (
@@ -432,7 +469,7 @@ export default function DmKeywordsPage() {
                   className={inputClass}
                   disabled={oncePerUser}
                 >
-                  {COOLDOWN_CHOICES.map((minutes) => (
+                  {COOLDOWN_CHOICES.filter((minutes) => minutes > 0 || !usesDailyDefault(ruleType)).map((minutes) => (
                     <option key={minutes} value={minutes}>
                       {cooldownLabel(minutes)}
                     </option>
@@ -451,8 +488,42 @@ export default function DmKeywordsPage() {
                 <span className="mb-1 block text-xs text-muted">{t("Ends (optional)")}</span>
                 <input type="datetime-local" value={endsAt} onChange={(e) => setEndsAt(e.target.value)} className={inputClass} />
               </label>
+              <label className="block sm:col-span-2">
+                <span className="mb-1 block text-xs text-muted">{t("Answer")}</span>
+                <select value={hoursMode} onChange={(e) => setHoursMode(e.target.value as HoursMode)} className={inputClass}>
+                  {(["ALWAYS", "OPEN", "CLOSED"] as HoursMode[]).map((mode) => (
+                    <option key={mode} value={mode}>
+                      {hoursLabel(mode)}
+                    </option>
+                  ))}
+                </select>
+                {hoursMode !== "ALWAYS" && (
+                  <span className="mt-1 block text-xs text-muted">
+                    {t("Uses the business hours set for the account in")}{" "}
+                    <Link href="/settings" className="text-accent hover:underline">
+                      {t("Settings")}
+                    </Link>
+                    {t(". Without hours, the account counts as always open.")}
+                  </span>
+                )}
+              </label>
             </div>
           )}
+
+          <label className="block">
+            <span className="mb-1 block text-xs text-muted">
+              {t("Tag the people it answers")} <span className="text-muted">{t("(optional)")}</span>
+            </span>
+            <input
+              value={tagText}
+              onChange={(e) => setTagText(e.target.value)}
+              placeholder={t("e.g. 梅西系列, VIP")}
+              className={inputClass}
+            />
+            <span className="mt-1 block text-xs text-muted">
+              {t("Tags show on Contacts, where you can send a module to everyone with a tag.")}
+            </span>
+          </label>
 
           <label className="block">
             <span className="mb-1 block text-xs text-muted">
@@ -464,7 +535,7 @@ export default function DmKeywordsPage() {
           {error && <p className="text-sm text-error">{error}</p>}
           {warnings.length > 0 && (
             <div className="rounded border border-warning/30 bg-warning/10 px-3 py-2 text-sm text-warning">
-              {t("Saved, but these also answer the same words in DMs, so people would get more than one reply:")}{" "}
+              {t("Saved, but these answer the same DMs, and only the oldest one replies:")}{" "}
               {warnings.map((w) => w.otherName).join("、")}
             </div>
           )}
@@ -553,13 +624,21 @@ export default function DmKeywordsPage() {
                     {rule.dmRuleType !== "ICE_BREAKER" && (
                       <>
                         {" · "}
-                        {rule.oncePerUser ? t("Once per person") : t("Cooldown: {value}", { value: cooldownLabel(rule.cooldownMinutes) })}
+                        {rule.oncePerUser
+                          ? t("Once per person")
+                          : t("Cooldown: {value}", {
+                              value: cooldownLabel(
+                                rule.cooldownMinutes === 0 && usesDailyDefault(rule.dmRuleType) ? 1440 : rule.cooldownMinutes
+                              ),
+                            })}
                       </>
                     )}
+                    {rule.hoursMode && rule.hoursMode !== "ALWAYS" && <> · {hoursLabel(rule.hoursMode)}</>}
+                    {(rule.addTags ?? []).length > 0 && <> · 🏷 {rule.addTags.join(", ")}</>}
                   </p>
                   {conflicts.length > 0 && (
                     <p className="mt-2 text-xs text-warning">
-                      ⚠ {t("Same words as:")} {conflicts.map((c) => c.otherName).join("、")}
+                      ⚠ {t("Overlaps with (only the oldest replies):")} {conflicts.map((c) => c.otherName).join("、")}
                     </p>
                   )}
                 </div>

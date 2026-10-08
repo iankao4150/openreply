@@ -10,12 +10,14 @@ import { UnrecoverableError, Worker, type Job } from "bullmq";
 import {
   getDMQueue,
   getRedisConnection,
+  BROADCAST_JOB_NAME,
   DM_ACTION_JOB_NAME,
   MESSAGE_JOB_NAME,
   POSTBACK_JOB_NAME,
   FOLLOWUP_JOB_NAME,
   type DmQueueJob,
   type ProcessCommentJob,
+  type ProcessBroadcastJob,
   type ProcessDmActionJob,
   type ProcessMessageJob,
   type ProcessPostbackJob,
@@ -23,6 +25,7 @@ import {
 } from "./client";
 import { liveAt } from "@/lib/campaigns/schedule";
 import { tagContact } from "@/lib/contacts/record";
+import { processBroadcast } from "@/lib/broadcasts/send";
 import { hoursAllow } from "@/lib/ops/business-hours";
 import { isHumanHandling, markAutomatedSend } from "@/lib/ops/human-pause";
 import {
@@ -2152,6 +2155,9 @@ async function dispatchJob(job: Job<DmQueueJob>): Promise<void> {
   }
   if (job.name === DM_ACTION_JOB_NAME) {
     return processDmAction(job as Job<ProcessDmActionJob>);
+  }
+  if (job.name === BROADCAST_JOB_NAME) {
+    return processBroadcast(job as Job<ProcessBroadcastJob>);
   }
   return processComment(job as Job<ProcessCommentJob>);
 }

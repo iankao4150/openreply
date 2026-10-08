@@ -92,17 +92,27 @@ export interface ProcessDmActionJob {
   mid: string;
 }
 
+/** Send the next batch of a broadcast; each batch queues the one after it. */
+export interface ProcessBroadcastJob {
+  accountConnectionId?: string;
+  broadcastId: string;
+  /** Instagram id of the sending account, for failure reports. */
+  instagramAccountId: string;
+}
+
 export type DmQueueJob =
   | ProcessCommentJob
   | ProcessPostbackJob
   | ProcessFollowUpJob
   | ProcessMessageJob
-  | ProcessDmActionJob;
+  | ProcessDmActionJob
+  | ProcessBroadcastJob;
 
 export const POSTBACK_JOB_NAME = "process-postback";
 export const FOLLOWUP_JOB_NAME = "process-followup";
 export const MESSAGE_JOB_NAME = "process-message";
 export const DM_ACTION_JOB_NAME = "process-dm-action";
+export const BROADCAST_JOB_NAME = "process-broadcast";
 
 let dmQueue: Queue<DmQueueJob> | null = null;
 

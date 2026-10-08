@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { businessHoursSchema } from "@/lib/ops/business-hours";
 import { z } from "zod";
 import { getCurrentWorkspaceId } from "@/lib/auth";
 import { prisma } from "@/lib/db/client";
@@ -33,6 +34,7 @@ export async function GET() {
       humanPauseMinutes: true,
       persistentMenu: true,
       hideCommentWords: true,
+      businessHours: true,
     },
   });
 
@@ -51,12 +53,15 @@ const settingsSchema = z
     humanPauseMinutes: z.number().int().min(0).max(1440).optional(),
     persistentMenu: menuSchema.optional(),
     hideCommentWords: z.array(z.string().trim().min(1).max(50)).max(100).optional(),
+    // Opening hours, or null to clear them.
+    businessHours: businessHoursSchema.nullable().optional(),
   })
   .refine(
     (d) =>
       d.humanPauseMinutes !== undefined ||
       d.persistentMenu !== undefined ||
-      d.hideCommentWords !== undefined
+      d.hideCommentWords !== undefined ||
+      d.businessHours !== undefined
   );
 
 /** PATCH ?id=: per-account automation settings. */
@@ -93,6 +98,13 @@ export async function PATCH(request: NextRequest) {
       ...(parsed.data.persistentMenu !== undefined ? { persistentMenu: parsed.data.persistentMenu } : {}),
       ...(parsed.data.hideCommentWords !== undefined
         ? { hideCommentWords: [...new Set(parsed.data.hideCommentWords)] }
+        : {}),
+      ...(parsed.data.businessHours !== undefined
+        ? {
+            businessHours: parsed.data.businessHours
+              ? { ...parsed.data.businessHours, days: [...new Set(parsed.data.businessHours.days)].sort() }
+              : {},
+          }
         : {}),
     },
   });

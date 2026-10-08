@@ -56,6 +56,7 @@ interface LoadedCampaign {
   startsAt?: string | null;
   endsAt?: string | null;
   oncePerUser?: boolean;
+  addTags?: string[];
   commentReplyStyle?: "CARDS" | "TEXT_FIRST";
   textOpener?: string | null;
   requireFollow: boolean;
@@ -213,6 +214,8 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
   const [startsAt, setStartsAt] = useState("");
   const [endsAt, setEndsAt] = useState("");
   const [oncePerUser, setOncePerUser] = useState(false);
+  // Tags added to everyone this campaign answers (see Contacts).
+  const [tagText, setTagText] = useState("");
   // How a module answers a comment: the cards themselves, or a text first.
   const [commentReplyStyle, setCommentReplyStyle] = useState<"CARDS" | "TEXT_FIRST">("CARDS");
   const [textOpener, setTextOpener] = useState("");
@@ -381,6 +384,7 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
         setStartsAt(toLocalInput(c.startsAt ?? null));
         setEndsAt(toLocalInput(c.endsAt ?? null));
         setOncePerUser(c.oncePerUser ?? false);
+        setTagText((c.addTags ?? []).join(", "));
         setCommentReplyStyle(c.commentReplyStyle ?? "CARDS");
         setTextOpener(c.textOpener ?? "");
       })
@@ -532,6 +536,11 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
       startsAt: startsAt ? new Date(startsAt).toISOString() : null,
       endsAt: endsAt ? new Date(endsAt).toISOString() : null,
       oncePerUser,
+      addTags: tagText
+        .split(/[,，、\n]/)
+        .map((tag) => tag.trim().slice(0, 30))
+        .filter(Boolean)
+        .slice(0, 10),
       commentReplyStyle,
       textOpener: textOpener.trim() || null,
       isActive: activeValue,
@@ -930,6 +939,20 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
           <label className="mt-3 flex items-center gap-2 text-sm">
             <input type="checkbox" checked={oncePerUser} onChange={(e) => setOncePerUser(e.target.checked)} />
             {t("Reply to each person only once (later comments from them are skipped)")}
+          </label>
+          <label className="mt-3 block">
+            <span className="mb-1 block text-xs text-muted">
+              {t("Tag the people it answers")} {t("(optional)")}
+            </span>
+            <input
+              value={tagText}
+              onChange={(e) => setTagText(e.target.value)}
+              placeholder={t("e.g. 梅西系列, VIP")}
+              className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-foreground placeholder:text-zinc-500 focus:border-accent/40 focus:outline-none"
+            />
+            <span className="mt-1 block text-xs text-muted">
+              {t("Tags show on Contacts, where you can send a module to everyone with a tag.")}
+            </span>
           </label>
         </Section>
 

@@ -3,6 +3,7 @@
 import LanguageSwitcher from "@/components/language-switcher";
 import { useI18n } from "@/lib/i18n/provider";
 import PersistentMenuEditor from "@/components/persistent-menu-editor";
+import BusinessHoursEditor from "@/components/business-hours-editor";
 import { Suspense, useEffect, useState } from "react";
 import type { AccountOption } from "@/components/account-select";
 import { ZernioConnection } from "@/components/zernio-connection";
@@ -28,6 +29,7 @@ interface SettingsData {
       humanPauseMinutes?: number;
       persistentMenu?: { title: string; url: string | null; moduleId: string | null }[];
       hideCommentWords?: string[];
+      businessHours?: unknown;
       webhookSubscribed: boolean;
     }
   >;
@@ -265,6 +267,9 @@ export default function SettingsPage() {
                   )}
                   {account.provider !== "ZERNIO" && (
                     <PersistentMenuEditor accountId={account.id} initial={account.persistentMenu ?? []} />
+                  )}
+                  {account.provider !== "ZERNIO" && (
+                    <BusinessHoursEditor accountId={account.id} initial={account.businessHours} />
                   )}
                   {account.provider !== "ZERNIO" && (
                     <label className="mt-3 block rounded border border-border p-3">
