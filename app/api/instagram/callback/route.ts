@@ -4,6 +4,7 @@ import { prisma } from "@/lib/db/client";
 import { getBaseUrl, usesFacebookLogin } from "@/lib/env";
 import { canConnectInstagramAccount } from "@/lib/instagram-accounts";
 import {
+  getDataAccessExpiry,
   getInstagramLinkedPages,
   getLongLivedToken,
   getLongLivedUserToken,
@@ -22,6 +23,7 @@ type AccountData = {
   name?: string;
   accessToken: string;
   tokenExpiresAt: Date | null;
+  accessExpiresAt?: Date | null;
   webhookSubscribed: boolean;
 };
 
@@ -82,6 +84,7 @@ async function connectFacebookLoginAccounts(
       name: page.instagram.name,
       accessToken: encryptToken(page.pageAccessToken),
       tokenExpiresAt: null,
+      accessExpiresAt: await getDataAccessExpiry(page.pageAccessToken),
       webhookSubscribed: await subscribeWebhooks(instagramId, page.pageAccessToken),
     });
     if (saved) connected++;

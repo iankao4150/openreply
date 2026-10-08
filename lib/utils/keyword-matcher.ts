@@ -61,6 +61,10 @@ const ARABIC_SCRIPT_FOLDING: Array<[RegExp, string]> = [
   [/[‌‎‏]/gu, ""],
 ];
 
+// Scripts written without spaces between words.
+const UNSPACED_SCRIPT =
+  /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}\p{Script=Thai}]/u;
+
 // Persian (U+06F0..) and Arabic-Indic (U+0660..) digit blocks, both ordered 0-9.
 const EASTERN_DIGITS = /[۰-۹٠-٩]/gu;
 
@@ -202,7 +206,11 @@ export function matchKeywords(
       ? foldNumericHomoglyphs(cleanedKeyword)
       : cleanedKeyword;
 
-    if (wholeWordMatch) {
+    // Chinese, Japanese, Korean and Thai are written without spaces between
+    // words, so the letter-boundary test below can never pass for a keyword
+    // inside a sentence: "我要梅西" must match 梅西, but 我 and 要 are letters.
+    // For those scripts whole-word matching means "contains".
+    if (wholeWordMatch && !UNSPACED_SCRIPT.test(compareKeyword)) {
       const escapedKeyword = compareKeyword.replace(
         /[.*+?^${}()|[\]\\]/g,
         "\\$&"

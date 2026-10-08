@@ -270,3 +270,44 @@ export async function sendCommentReply({
   if (!result?.data?.commentId) throw new ZernioDeliveryUnconfirmedError();
   return { id: result.data.commentId };
 }
+
+/**
+ * Zernio's message API has no generic template. Thrown so the caller falls back
+ * to a button template or plain text instead of failing the send.
+ */
+export class CardsUnsupportedError extends Error {
+  constructor() {
+    super("This connection cannot send carousel cards");
+    this.name = "CardsUnsupportedError";
+  }
+}
+
+export async function sendPrivateReplyWithCards({
+  context,
+  instagramAccountId,
+  commentId,
+  elements,
+}: {
+  context: InstagramContext;
+  instagramAccountId: string;
+  commentId: string;
+  elements: meta.GenericTemplateElement[];
+}) {
+  if (context.provider !== "META") throw new CardsUnsupportedError();
+  return meta.sendPrivateReplyWithCards(context.accessToken, instagramAccountId, commentId, elements);
+}
+
+export async function sendDirectMessageWithCards({
+  context,
+  instagramAccountId,
+  userId,
+  elements,
+}: {
+  context: InstagramContext;
+  instagramAccountId: string;
+  userId: string;
+  elements: meta.GenericTemplateElement[];
+}) {
+  if (context.provider !== "META") throw new CardsUnsupportedError();
+  return meta.sendDirectMessageWithCards(context.accessToken, instagramAccountId, userId, elements);
+}

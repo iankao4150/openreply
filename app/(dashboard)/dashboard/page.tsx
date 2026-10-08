@@ -26,7 +26,7 @@ interface DashboardStats {
   clicksThisMonth: number;
   totalClicks: number;
   ctrThisMonth: number;
-  instagramAccounts: AccountOption[];
+  instagramAccounts: Array<AccountOption & { accessExpiresAt?: string | null }>;
   selectedInstagramAccountId: string | null;
   topKeywords: { keyword: string; count: number }[];
   dailyDMs: { date: string; count: number }[];
@@ -42,7 +42,9 @@ interface DashboardStats {
 }
 
 export default function DashboardPage() {
-  const { t, label } = useI18n();
+  const { t, label, locale } = useI18n();
+  // Captured once per visit: the expiry warning only needs day precision.
+  const [now] = useState(() => Date.now());
   const [stats, setStats] = useState<DashboardStats | null>(null);
   const [loading, setLoading] = useState(true);
   const [selectedAccountId, setSelectedAccountId] = useState("all");
@@ -113,6 +115,28 @@ export default function DashboardPage() {
           />
         )}
       </div>
+
+      {/* Meta's data access lapses ~90 days after the last sign-in; warn early. */}
+      {stats?.instagramAccounts
+        .filter(
+          (account) =>
+            account.accessExpiresAt &&
+            new Date(account.accessExpiresAt).getTime() - now < 14 * 86_400_000
+        )
+        .map((account) => (
+          <div
+            key={account.id}
+            className="rounded border border-warning/30 bg-warning/10 px-4 py-3 text-sm text-warning"
+          >
+            {t("Meta access for @{username} ends on {date}. Reconnect Instagram before then to keep replies running.", {
+              username: account.username,
+              date: new Date(account.accessExpiresAt as string).toLocaleDateString(locale),
+            })}{" "}
+            <a href="/api/instagram/connect" className="font-medium underline">
+              {t("Reconnect")}
+            </a>
+          </div>
+        ))}
 
       {/* Stat Cards */}
       <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-3 sm:gap-4">

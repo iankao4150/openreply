@@ -85,6 +85,9 @@ model Workspace {
   linkClicks        LinkClick[]
   webhookEvents     WebhookEvent[]
   operationalEvents OperationalEvent[]
+  messageModules    MessageModule[]
+  moduleLinks       ModuleLink[]
+  moduleLinkClicks  ModuleLinkClick[]
 
   @@index([ownerId])
 }
@@ -135,6 +138,10 @@ model InstagramAccount {
   zernioAccountId   String?
   accessToken       String
   tokenExpiresAt    DateTime?
+  // When Meta's data access for this connection lapses (Facebook Login's
+  // data_access_expires_at, ~90 days after the last sign-in). The token itself
+  // never expires, so the refresh cron cannot extend this — only reconnecting.
+  accessExpiresAt   DateTime?
   webhookSubscribed Boolean  @default(false)
   connectedAt       DateTime @default(now())
   updatedAt         DateTime @updatedAt
@@ -198,6 +205,11 @@ model Automation {
   // Minutes to wait after the link is delivered before sending the follow-up.
   // 0 sends it right away.
   followUpDelayMinutes Int @default(0)
+  // Reply with a reusable message module (carousel cards) instead of dmMessage.
+  // dmMessage is kept as the plain-text fallback if Meta refuses the cards.
+  messageModuleId String?
+  // A DM keyword rule: triggered only by DMs, never bound to a post.
+  dmOnly Boolean @default(false)
   publicReplyEnabled Boolean @default(false)
   publicReplyMessage String?
   publicReplyMessages String[] @default([])
@@ -214,10 +226,13 @@ model Automation {
   dmLogs           DmLog[]
   trackedLinks     TrackedLink[]
   linkClicks       LinkClick[]
+  messageModule    MessageModule?    @relation(fields: [messageModuleId], references: [id], onDelete: SetNull)
+  moduleLinkClicks ModuleLinkClick[]
 
   @@index([workspaceId])
   @@index([instagramAccountId])
   @@index([postId])
+  @@index([messageModuleId])
 }
 
 model DmLog {
@@ -418,4 +433,71 @@ model ZernioConnection {
 model PostbackDelivery {
   id String @id
   createdAt DateTime @default(now())
+}
+
+// A reusable reply: an optional lead-in text plus 1–10 carousel cards, sent as
+// an Instagram generic template. Campaigns and DM keyword rules point at it.
+model MessageModule {
+  id          String   @id @default(cuid())
+  workspaceId String
+  name        String
+  // Sent as its own message before the cards, only where a conversation is
+  // already open (DM triggers, button taps). A comment's private reply is a
+  // single message, so there the cards go alone.
+  introText   String?
+  // ModuleCard[] — see lib/modules/schema.ts.
+  cards       Json
+  utmSource   String   @default("openreply")
+  utmMedium   String   @default("dm")
+  utmCampaign String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  workspace   Workspace    @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  automations Automation[]
+  links       ModuleLink[]
+
+  @@index([workspaceId])
+}
+
+// One tracked redirect per card image and card button, so clicks are counted
+// per slot. Synced from the module's cards on every save.
+model ModuleLink {
+  id             String   @id @default(cuid())
+  workspaceId    String
+  moduleId       String
+  slug           String   @unique
+  // 1-based card number and "img" | "btn1" | "btn2" | "btn3".
+  card           Int
+  slot           String
+  destinationUrl String
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  workspace Workspace         @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  module    MessageModule     @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+  clicks    ModuleLinkClick[]
+
+  @@unique([moduleId, card, slot])
+  @@index([workspaceId])
+}
+
+model ModuleLinkClick {
+  id            String   @id @default(cuid())
+  workspaceId   String
+  moduleLinkId  String
+  // The campaign or DM rule that sent the cards, when the link carried it.
+  automationId  String?
+  recipientHash String?
+  ipHash        String?
+  userAgent     String?
+  createdAt     DateTime @default(now())
+
+  workspace  Workspace   @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  moduleLink ModuleLink  @relation(fields: [moduleLinkId], references: [id], onDelete: Cascade)
+  automation Automation? @relation(fields: [automationId], references: [id], onDelete: SetNull)
+
+  @@index([workspaceId, createdAt])
+  @@index([moduleLinkId])
+  @@index([automationId])
 }

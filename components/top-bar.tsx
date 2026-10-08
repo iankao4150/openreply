@@ -19,6 +19,9 @@ const pageTitles: Record<string, StaticMessageKey> = {
   "/campaigns/new": "New Campaign",
   "/automations": "Campaigns",
   "/automations/new": "New Campaign",
+  "/modules": "Message modules",
+  "/modules/new": "New module",
+  "/dm-keywords": "DM keywords",
   "/logs": "DM Logs",
   "/settings": "Settings",
   "/diagnostics": "Diagnostics",
@@ -39,7 +42,8 @@ export default function TopBar({
   const pathname = usePathname();
   const title: StaticMessageKey = pageTitles[pathname] ?? (
     pathname.endsWith("/edit") ? "Edit campaign"
-      : pathname.startsWith("/campaigns/") ? "Campaign details" : "Dashboard"
+      : pathname.startsWith("/campaigns/") ? "Campaign details"
+      : pathname.startsWith("/modules/") ? "Edit module" : "Dashboard"
   );
 
   return (

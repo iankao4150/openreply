@@ -54,6 +54,21 @@ import { TRACKED_LINK_ORDER } from "@/lib/tracking/link-order";
 import { hashRecipientId } from "@/lib/tracking/server";
 
 import { ZernioApiError } from "@/lib/zernio/client";
+import {
+  sendModuleAsDirectMessage,
+  sendModuleAsPrivateReply,
+  type SendableModule,
+} from "@/lib/modules/send";
+
+// Loaded with every campaign so a module reply can be sent without a second query.
+const MESSAGE_MODULE_INCLUDE = {
+  select: {
+    id: true,
+    introText: true,
+    cards: true,
+    links: { select: { slug: true, card: true, slot: true } },
+  },
+} as const;
 
 const BACKOFF_DELAYS = [5 * 60 * 1000, 15 * 60 * 1000, 45 * 60 * 1000];
 
@@ -184,6 +199,8 @@ function buildInlineLinkFallback(
 }
 
 type RevealAutomation = {
+  id: string;
+  messageModule?: SendableModule | null;
   dmMessage: string;
   linkButtonLabel: string | null;
   trackedLinks: WorkerTrackedLink[];
@@ -208,6 +225,22 @@ async function sendRevealDirectMessage({
   commenterName: string | null;
   context: string;
 }): Promise<void> {
+  if (automation.messageModule) {
+    const delivery = await sendModuleAsDirectMessage({
+      context: accessToken,
+      instagramAccountId: automation.instagramAccount.instagramId,
+      userId,
+      module: automation.messageModule,
+      automationId: automation.id,
+      commenterName,
+      fallbackText: automation.dmMessage,
+    });
+    if (delivery !== "cards") {
+      console.log(`[DM Worker] Module sent as ${delivery} in ${context}`);
+    }
+    return;
+  }
+
   if (automation.trackedLinks.length === 0) {
     await sendDirectMessage({
       context: accessToken,
@@ -316,6 +349,7 @@ async function processComment(job: Job<ProcessCommentJob>): Promise<void> {
         },
         orderBy: TRACKED_LINK_ORDER,
       },
+      messageModule: MESSAGE_MODULE_INCLUDE,
     },
     orderBy: { createdAt: "asc" },
   });
@@ -696,6 +730,21 @@ async function processComment(job: Job<ProcessCommentJob>): Promise<void> {
           payload: `followcheck:${automation.id}`,
           postId: mediaId,
         });
+      } else if (automation.messageModule) {
+        const delivery = await sendModuleAsPrivateReply({
+          context: accessToken,
+          instagramAccountId: automation.instagramAccount.instagramId,
+          commentId,
+          postId: mediaId,
+          module: automation.messageModule,
+          automationId: automation.id,
+          commenterId,
+          commenterName,
+          fallbackText: automation.dmMessage,
+        });
+        if (delivery !== "cards") {
+          console.log(`[DM Worker] Module sent as ${delivery} for comment ${commentId}`);
+        }
       } else if (automation.trackedLinks.length > 0) {
         // Try button template first; if Meta rejects it, fall back to inline links.
         const bodyText =
@@ -906,6 +955,7 @@ async function processPostback(job: Job<ProcessPostbackJob>): Promise<void> {
         select: { slug: true, label: true, destinationUrl: true },
         orderBy: TRACKED_LINK_ORDER,
       },
+      messageModule: MESSAGE_MODULE_INCLUDE,
     },
   });
 
@@ -1293,6 +1343,7 @@ async function processMessage(job: Job<ProcessMessageJob>): Promise<void> {
         select: { slug: true, label: true, destinationUrl: true },
         orderBy: TRACKED_LINK_ORDER,
       },
+      messageModule: MESSAGE_MODULE_INCLUDE,
     },
     orderBy: { createdAt: "asc" },
   });

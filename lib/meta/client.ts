@@ -430,6 +430,66 @@ export async function sendDirectMessageWithLinkButton(
   return handleResponse(response);
 }
 
+/**
+ * A carousel of cards (Instagram generic template, up to 10 elements). The
+ * recipient is either a comment (the single private reply allowed for it) or
+ * a user's IGSID inside an open conversation.
+ */
+export interface GenericTemplateElement {
+  title: string;
+  subtitle?: string;
+  image_url?: string;
+  default_action?: { type: "web_url"; url: string };
+  buttons?: { type: "web_url"; url: string; title: string }[];
+}
+
+async function sendGenericTemplate(
+  accessToken: string,
+  instagramAccountId: string,
+  recipient: { comment_id: string } | { id: string },
+  elements: GenericTemplateElement[]
+): Promise<{ recipient_id: string; message_id: string }> {
+  const response = await fetch(
+    `${instagramGraphBase()}/${messagingNode(instagramAccountId)}/messages`,
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${accessToken}`,
+      },
+      body: JSON.stringify({
+        recipient,
+        message: {
+          attachment: {
+            type: "template",
+            payload: { template_type: "generic", elements: elements.slice(0, 10) },
+          },
+        },
+      }),
+    }
+  );
+
+  return handleResponse(response);
+}
+
+export function sendPrivateReplyWithCards(
+  accessToken: string,
+  instagramAccountId: string,
+  commentId: string,
+  elements: GenericTemplateElement[]
+) {
+  return sendGenericTemplate(accessToken, instagramAccountId, { comment_id: commentId }, elements);
+}
+
+export function sendDirectMessageWithCards(
+  accessToken: string,
+  instagramAccountId: string,
+  userId: string,
+  elements: GenericTemplateElement[]
+) {
+  return sendGenericTemplate(accessToken, instagramAccountId, { id: userId }, elements);
+}
+
 export async function sendCommentReply(
   accessToken: string,
   commentId: string,
@@ -881,6 +941,23 @@ export async function subscribeInstagramAccountToWebhooks(
   );
 
   return handleResponse(response);
+}
+
+/**
+ * When Meta's data access for a Facebook Login token lapses (about 90 days
+ * after the person last signed in). Null when Meta does not say.
+ */
+export async function getDataAccessExpiry(token: string): Promise<Date | null> {
+  try {
+    const appToken = `${requireEnv("INSTAGRAM_APP_ID")}|${requireEnv("INSTAGRAM_APP_SECRET")}`;
+    const result = (await debugToken(token, appToken)) as {
+      data?: { data_access_expires_at?: number };
+    };
+    const seconds = result.data?.data_access_expires_at;
+    return seconds ? new Date(seconds * 1000) : null;
+  } catch {
+    return null;
+  }
 }
 
 export async function debugToken(inputToken: string, accessToken: string) {

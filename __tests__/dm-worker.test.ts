@@ -346,6 +346,14 @@ describe("DM Worker — Full Pipeline", () => {
           // tie breakers, so tied rows can never come back swapped.
           orderBy: [{ position: "asc" }, { createdAt: "asc" }, { id: "asc" }],
         },
+        messageModule: {
+          select: {
+            id: true,
+            introText: true,
+            cards: true,
+            links: { select: { slug: true, card: true, slot: true } },
+          },
+        },
       },
       orderBy: { createdAt: "asc" },
     });

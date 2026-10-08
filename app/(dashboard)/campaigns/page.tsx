@@ -35,6 +35,9 @@ interface Campaign {
   followPromptButtonLabel: string | null;
   isActive: boolean;
   wholeWordMatch: boolean;
+  dmOnly: boolean;
+  messageModule: { id: string; name: string } | null;
+  conflicts?: { otherId: string; otherName: string; kind: "comment" | "dm" }[];
   instagramAccountId: string;
   instagramAccount: {
     username: string;
@@ -98,7 +101,8 @@ export default function CampaignsPage() {
         { cache: "no-store" }
       );
       const data = await res.json();
-      if (data.success) setAutomations(data.data);
+      // DM keyword rules have their own page.
+      if (data.success) setAutomations((data.data as Campaign[]).filter((a) => !a.dmOnly));
     } catch (err) {
       console.error("Failed to fetch campaigns:", err);
     } finally {
@@ -462,7 +466,20 @@ export default function CampaignsPage() {
                 </div>
 
                 {/* DM preview */}
-                <p className="text-sm text-muted truncate">&ldquo;{auto.dmMessage}{t("”")}</p>
+                {auto.messageModule ? (
+                  <p className="text-sm text-muted truncate">
+                    {t("Module")}:{" "}
+                    <span className="text-foreground">{auto.messageModule.name}</span>
+                  </p>
+                ) : (
+                  <p className="text-sm text-muted truncate">&ldquo;{auto.dmMessage}{t("”")}</p>
+                )}
+                {(auto.conflicts ?? []).length > 0 && (
+                  <p className="mt-1 text-xs text-warning">
+                    ⚠ {t("Overlaps with:")}{" "}
+                    {[...new Set((auto.conflicts ?? []).map((c) => c.otherName))].join("、")}
+                  </p>
+                )}
 
                 {/* Tracked link sent */}
                 {auto.trackedLinks[0]?.trackedUrl && (

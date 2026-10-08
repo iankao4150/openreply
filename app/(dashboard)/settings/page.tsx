@@ -23,6 +23,7 @@ interface SettingsData {
     AccountOption & {
       provider?: "META" | "ZERNIO";
       tokenExpiresAt: string | null;
+      accessExpiresAt?: string | null;
       webhookSubscribed: boolean;
     }
   >;
@@ -51,6 +52,8 @@ interface WorkspaceMembersData {
 
 export default function SettingsPage() {
   const { t, label, locale } = useI18n();
+  // Captured once per visit: the expiry warning only needs day precision.
+  const [now] = useState(() => Date.now());
   const [data, setData] = useState<SettingsData | null>(null);
   const [membersData, setMembersData] = useState<WorkspaceMembersData | null>(
     null
@@ -199,12 +202,24 @@ export default function SettingsPage() {
                     @{account.username}
                   </p>
                   <p className="mt-1 text-xs text-muted">
-                    {account.provider === "ZERNIO" ? t("Connected via Zernio") : <>{t("Token expires")}{" "}
+                    {account.provider === "ZERNIO" ? t("Connected via Zernio") : account.accessExpiresAt ? (
+                      <>{t("Meta access valid until")}{" "}
+                      {new Date(account.accessExpiresAt).toLocaleDateString(locale)}</>
+                    ) : <>{t("Token expires")}{" "}
                     {account.tokenExpiresAt
                       ? new Date(account.tokenExpiresAt).toLocaleDateString(locale)
                       : t("not available")}</>}{" "}
                     · {account.webhookSubscribed ? t("Webhook ready") : t("Webhook pending")}
                   </p>
+                  {account.accessExpiresAt &&
+                    new Date(account.accessExpiresAt).getTime() - now < 14 * 86_400_000 && (
+                      <p className="mt-1 text-xs font-medium text-warning">
+                        {t("Meta access ends soon. Reconnect Instagram before then to keep replies running.")}{" "}
+                        <a href="/api/instagram/connect" className="underline">
+                          {t("Reconnect")}
+                        </a>
+                      </p>
+                    )}
                 </div>
                 <button
                   onClick={() => disconnectInstagram(account.id)}

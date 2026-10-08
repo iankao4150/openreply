@@ -16,6 +16,12 @@ import {
 } from "@/lib/campaigns/links";
 import { buildReportUrl, generateReportShareSlug } from "@/lib/reports/share";
 import {
+  CONFLICT_CANDIDATE_SELECT,
+  findConflicts,
+  type ConflictCandidate,
+} from "@/lib/campaigns/conflicts";
+import { parseStoredCards } from "@/lib/modules/schema";
+import {
   canManageWorkspace,
   getCurrentWorkspaceContext,
 } from "@/lib/workspace-access";
@@ -36,7 +42,12 @@ const createAutomationSchema = z
     keywords: z.array(z.string().min(1).max(50)).max(10).optional().default([]),
     matchAnyWord: z.boolean().optional().default(false),
     dmTriggerEnabled: z.boolean().optional().default(false),
-    dmMessage: z.string().min(1).max(1000),
+    // Optional when a message module answers instead; then it is the
+    // plain-text fallback and defaults to the module's first card.
+    dmMessage: z.string().max(1000).optional().default(""),
+    messageModuleId: z.string().min(1).optional().nullable(),
+    // A DM keyword rule: answers DMs only, never a post's comments.
+    dmOnly: z.boolean().optional().default(false),
     openingDmEnabled: z.boolean().optional().default(false),
     openingDmMessage: z.string().max(1000).optional().nullable(),
     openingDmButtonLabel: z.string().max(64).optional().nullable(),
@@ -72,9 +83,18 @@ const createAutomationSchema = z
   })
   // A campaign must target a specific post, any post, or the next reel.
   .refine(
-    (d) => d.matchAnyPost || d.pendingNextReel || Boolean(d.postId),
+    (d) => d.dmOnly || d.matchAnyPost || d.pendingNextReel || Boolean(d.postId),
     { message: "Choose which post(s) trigger the campaign", path: ["postId"] }
   )
+  // Every DM matching nothing in particular would get a reply: never intended.
+  .refine((d) => !(d.dmOnly && d.matchAnyWord), {
+    message: "A DM keyword rule needs at least one keyword",
+    path: ["keywords"],
+  })
+  .refine((d) => Boolean(d.dmMessage.trim()) || Boolean(d.messageModuleId), {
+    message: "Add the DM text or choose a message module",
+    path: ["dmMessage"],
+  })
   // And it must match either specific words or any word.
   .refine((d) => d.matchAnyWord || d.keywords.length >= 1, {
     message: "Add at least one keyword, or match any word",
@@ -99,7 +119,8 @@ const updateAutomationSchema = z.object({
   keywords: z.array(z.string().min(1).max(50)).max(10).optional(),
   matchAnyWord: z.boolean().optional(),
   dmTriggerEnabled: z.boolean().optional(),
-  dmMessage: z.string().min(1).max(1000).optional(),
+  dmMessage: z.string().max(1000).optional(),
+  messageModuleId: z.string().min(1).optional().nullable(),
   openingDmEnabled: z.boolean().optional(),
   openingDmMessage: z.string().max(1000).optional().nullable(),
   openingDmButtonLabel: z.string().max(64).optional().nullable(),
@@ -129,6 +150,29 @@ const updateAutomationSchema = z.object({
     .nullable(),
   secondaryButtonLabel: z.string().max(20).optional().nullable(),
 });
+
+/** Plain text sent if Meta refuses a module's cards: its intro or first card. */
+function moduleFallbackText(moduleRecord: { name: string; introText: string | null; cards: unknown }) {
+  const [first] = parseStoredCards(moduleRecord.cards);
+  const fromCard = first ? [first.title, first.subtitle].filter(Boolean).join("\n") : "";
+  return (moduleRecord.introText || fromCard || moduleRecord.name).slice(0, 1000);
+}
+
+async function findModule(workspaceId: string, id: string | null | undefined) {
+  if (!id) return null;
+  return prisma.messageModule.findFirst({
+    where: { id, workspaceId },
+    select: { id: true, name: true, introText: true, cards: true },
+  });
+}
+
+async function conflictsFor(workspaceId: string, target: ConflictCandidate) {
+  const others = await prisma.automation.findMany({
+    where: { workspaceId, instagramAccountId: target.instagramAccountId, isActive: true },
+    select: CONFLICT_CANDIDATE_SELECT,
+  });
+  return findConflicts(target, others);
+}
 
 export async function GET(request: NextRequest) {
   const workspaceId = await getCurrentWorkspaceId();
@@ -164,6 +208,7 @@ export async function GET(request: NextRequest) {
         },
         orderBy: TRACKED_LINK_ORDER,
       },
+      messageModule: { select: { id: true, name: true } },
     },
     orderBy: { createdAt: "desc" },
   });
@@ -185,7 +230,7 @@ export async function GET(request: NextRequest) {
     })
   );
 
-  const [statusCounts, clickRows, keywordCounts] = await Promise.all([
+  const [statusCounts, clickRows, keywordCounts, moduleClickRows] = await Promise.all([
     prisma.dmLog.groupBy({
       by: ["automationId", "status"],
       where: { workspaceId },
@@ -199,6 +244,11 @@ export async function GET(request: NextRequest) {
       by: ["automationId", "matchedKeyword"],
       where: { workspaceId, matchedKeyword: { not: null } },
       _count: { _all: true },
+    }),
+    // Taps on a module's cards, attributed to the campaign that sent them.
+    prisma.moduleLinkClick.findMany({
+      where: { workspaceId, automationId: { not: null } },
+      select: CLICK_ROW_SELECT,
     }),
   ]);
 
@@ -232,7 +282,12 @@ export async function GET(request: NextRequest) {
     if (row.status.startsWith("SKIPPED_")) item.skipped += count;
   }
 
-  const clickCounts = countUniqueClicksBy(clickRows, (row) => row.automationId);
+  // One person tapping both a link button and a card counts once.
+  const allClickRows = [
+    ...clickRows,
+    ...moduleClickRows.map((row) => ({ ...row, automationId: row.automationId as string })),
+  ];
+  const clickCounts = countUniqueClicksBy(allClickRows, (row) => row.automationId);
   for (const [automationId, clicks] of clickCounts) {
     const item = analytics.get(automationId);
     if (item) item.clicks = clicks;
@@ -273,6 +328,7 @@ export async function GET(request: NextRequest) {
         reportUrl: automation.reportShareSlug
           ? buildReportUrl(automation.reportShareSlug)
           : null,
+        conflicts: findConflicts(automation, automationsWithReports),
         analytics: {
           ...item,
           ctr: calculateCtr(item.clicks, item.sent),
@@ -350,6 +406,17 @@ export async function POST(request: NextRequest) {
     );
   }
 
+  const messageModule = await findModule(workspaceId, parsed.data.messageModuleId);
+  if (parsed.data.messageModuleId && !messageModule) {
+    return NextResponse.json(
+      { success: false, error: "Message module not found" },
+      { status: 400 }
+    );
+  }
+  const dmOnly = parsed.data.dmOnly;
+  const dmMessage =
+    parsed.data.dmMessage.trim() || (messageModule ? moduleFallbackText(messageModule) : "");
+
   const linkCreates = buildInitialCampaignLinks({
     workspaceId,
     primaryUrl: parsed.data.trackedDestinationUrl,
@@ -357,10 +424,13 @@ export async function POST(request: NextRequest) {
     secondaryLabel: parsed.data.secondaryButtonLabel,
   });
 
-  const { pendingNextReel, matchAnyPost, matchAnyWord, openingDmEnabled } =
-    parsed.data;
+  // A DM keyword rule carries no post and none of the comment-only options.
+  const pendingNextReel = dmOnly ? false : parsed.data.pendingNextReel;
+  const matchAnyPost = dmOnly ? false : parsed.data.matchAnyPost;
+  const { matchAnyWord } = parsed.data;
+  const openingDmEnabled = dmOnly ? false : parsed.data.openingDmEnabled;
   // A post is only stored for the "specific post" trigger.
-  const isSpecificPost = !pendingNextReel && !matchAnyPost;
+  const isSpecificPost = !dmOnly && !pendingNextReel && !matchAnyPost;
   const publicReplyList = (
     parsed.data.publicReplyMessages.length > 0
       ? parsed.data.publicReplyMessages
@@ -382,8 +452,10 @@ export async function POST(request: NextRequest) {
       matchAnyPost,
       keywords: matchAnyWord ? [] : parsed.data.keywords,
       matchAnyWord,
-      dmTriggerEnabled: parsed.data.dmTriggerEnabled,
-      dmMessage: parsed.data.dmMessage,
+      dmTriggerEnabled: dmOnly || parsed.data.dmTriggerEnabled,
+      dmMessage,
+      messageModuleId: messageModule?.id ?? null,
+      dmOnly,
       openingDmEnabled,
       openingDmMessage: openingDmEnabled
         ? parsed.data.openingDmMessage || null
@@ -406,13 +478,13 @@ export async function POST(request: NextRequest) {
       followUpDelayMinutes: parsed.data.followUpEnabled
         ? parsed.data.followUpDelayMinutes
         : 0,
-      publicReplyEnabled: parsed.data.publicReplyEnabled,
-      publicReplyMessages: parsed.data.publicReplyEnabled
-        ? publicReplyList
-        : [],
-      publicReplyMessage: parsed.data.publicReplyEnabled
-        ? publicReplyList[0] ?? parsed.data.publicReplyMessage ?? null
-        : null,
+      publicReplyEnabled: !dmOnly && parsed.data.publicReplyEnabled,
+      publicReplyMessages:
+        !dmOnly && parsed.data.publicReplyEnabled ? publicReplyList : [],
+      publicReplyMessage:
+        !dmOnly && parsed.data.publicReplyEnabled
+          ? publicReplyList[0] ?? parsed.data.publicReplyMessage ?? null
+          : null,
       isActive: parsed.data.isActive,
       wholeWordMatch: parsed.data.wholeWordMatch,
       workspaceId,
@@ -427,8 +499,10 @@ export async function POST(request: NextRequest) {
     },
   });
 
+  const warnings = await conflictsFor(workspaceId, automation);
+
   return NextResponse.json(
-    { success: true, data: automation },
+    { success: true, data: automation, warnings },
     { status: 201 }
   );
 }
@@ -491,6 +565,46 @@ export async function PATCH(request: NextRequest) {
     ...automationData
   } = parsed.data;
 
+  // The module the campaign ends up with, to validate it and derive the
+  // plain-text fallback when no DM text was given.
+  const nextModuleId =
+    automationData.messageModuleId === undefined
+      ? existing.messageModuleId
+      : automationData.messageModuleId;
+  const messageModule = await findModule(workspaceId, nextModuleId);
+  if (nextModuleId && !messageModule) {
+    return NextResponse.json(
+      { success: false, error: "Message module not found" },
+      { status: 400 }
+    );
+  }
+  const nextDmMessage = (automationData.dmMessage ?? existing.dmMessage).trim();
+  if (!nextDmMessage) {
+    if (!messageModule) {
+      return NextResponse.json(
+        { success: false, error: "Add the DM text or choose a message module" },
+        { status: 400 }
+      );
+    }
+    automationData.dmMessage = moduleFallbackText(messageModule);
+  }
+  // A DM keyword rule keeps no post and none of the comment-only options.
+  if (existing.dmOnly) {
+    automationData.postId = null;
+    automationData.postUrl = null;
+    automationData.matchAnyPost = false;
+    automationData.pendingNextReel = false;
+    automationData.publicReplyEnabled = false;
+    automationData.openingDmEnabled = false;
+    automationData.dmTriggerEnabled = true;
+    if (automationData.matchAnyWord === true) {
+      return NextResponse.json(
+        { success: false, error: "A DM keyword rule needs at least one keyword" },
+        { status: 400 }
+      );
+    }
+  }
+
   // Keep dependent fields consistent: any-word clears keywords; a disabled
   // opening DM clears its message and button.
   if (automationData.matchAnyWord === true) automationData.keywords = [];
@@ -544,7 +658,9 @@ export async function PATCH(request: NextRequest) {
     return campaign;
   });
 
-  return NextResponse.json({ success: true, data: updated });
+  const warnings = await conflictsFor(workspaceId, updated);
+
+  return NextResponse.json({ success: true, data: updated, warnings });
 }
 
 export async function DELETE(request: NextRequest) {

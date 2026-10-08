@@ -13,8 +13,10 @@
  */
 
 import { useI18n } from "@/lib/i18n/provider";
+import ModulePreview, { type PreviewCard } from "@/components/module-preview";
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import AccountSelect, { type AccountOption } from "@/components/account-select";
 import PostPicker from "@/components/post-picker";
 import CampaignPreview, { type PreviewTab } from "@/components/campaign-preview";
@@ -43,6 +45,7 @@ interface LoadedCampaign {
   openingDmMessage: string | null;
   openingDmButtonLabel: string | null;
   linkButtonLabel: string | null;
+  messageModuleId?: string | null;
   requireFollow: boolean;
   followPromptMessage: string | null;
   followPromptButtonLabel: string | null;
@@ -169,6 +172,16 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
   const [openingDmButtonLabel, setOpeningDmButtonLabel] = useState("");
 
   const [dmMessage, setDmMessage] = useState("");
+  // Reply with a reusable message module (carousel cards) instead of text.
+  const [replyMode, setReplyMode] = useState<"text" | "module">("text");
+  const [messageModuleId, setMessageModuleId] = useState("");
+  const [moduleOptions, setModuleOptions] = useState<
+    { id: string; name: string; cardCount: number }[]
+  >([]);
+  const [modulePreview, setModulePreview] = useState<{
+    introText: string;
+    cards: PreviewCard[];
+  } | null>(null);
   const [linkOpen, setLinkOpen] = useState(false);
   const [trackedDestinationUrl, setTrackedDestinationUrl] = useState("");
   const [linkButtonLabel, setLinkButtonLabel] = useState("Open link");
@@ -227,6 +240,51 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
     };
   }, [selectedAccountId]);
 
+  // Message modules a campaign can reply with.
+  useEffect(() => {
+    fetch("/api/modules")
+      .then((r) => r.json())
+      .then((payload) => {
+        if (payload.success) setModuleOptions(payload.data);
+      })
+      .catch(() => setModuleOptions([]));
+  }, []);
+
+  // The chosen module's cards, for the preview.
+  useEffect(() => {
+    if (replyMode !== "module" || !messageModuleId) return;
+    let cancelled = false;
+    fetch(`/api/modules?id=${messageModuleId}`)
+      .then((r) => r.json())
+      .then((payload) => {
+        if (cancelled || !payload.success) return;
+        const loaded = payload.data as {
+          introText: string | null;
+          cards: {
+            imageUrl: string | null;
+            title: string;
+            subtitle: string | null;
+            imageLinkUrl: string | null;
+            buttons: { label: string; url: string }[];
+          }[];
+        };
+        setModulePreview({
+          introText: loaded.introText ?? "",
+          cards: loaded.cards.map((card) => ({
+            imageUrl: card.imageUrl ?? "",
+            title: card.title,
+            subtitle: card.subtitle ?? "",
+            imageLinkUrl: card.imageLinkUrl ?? "",
+            buttons: card.buttons,
+          })),
+        });
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [replyMode, messageModuleId]);
+
   // Load accounts (both modes need them for the preview username + selector).
   useEffect(() => {
     fetch("/api/dashboard/stats")
@@ -272,7 +330,9 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
         setOpeningDmEnabled(c.openingDmEnabled);
         setOpeningDmMessage(c.openingDmMessage ?? "");
         setOpeningDmButtonLabel(c.openingDmButtonLabel ?? "");
-        setDmMessage(c.dmMessage);
+        setDmMessage(c.messageModuleId ? "" : c.dmMessage);
+        setReplyMode(c.messageModuleId ? "module" : "text");
+        setMessageModuleId(c.messageModuleId ?? "");
         setLinkButtonLabel(c.linkButtonLabel ?? "Open link");
         setIsActive(c.isActive);
         const link = c.trackedLinks?.[0]?.destinationUrl ?? "";
@@ -393,7 +453,10 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
       return setError(t("Pick a post or reel to trigger the campaign."));
     if (matchMode === "specific" && keywords.length === 0)
       return setError(t("Add at least one keyword, or switch to any word."));
-    if (!dmMessage.trim()) return setError(t("Add the DM with the link."));
+    if (replyMode === "text" && !dmMessage.trim())
+      return setError(t("Add the DM with the link."));
+    if (replyMode === "module" && !messageModuleId)
+      return setError(t("Choose a message module."));
     if (openingDmEnabled && (!openingDmMessage.trim() || !openingDmButtonLabel.trim()))
       return setError(t("Your opening DM needs a message and a button label."));
 
@@ -409,7 +472,9 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
       matchAnyWord: matchMode === "any",
       keywords: matchMode === "any" ? [] : keywords,
       dmTriggerEnabled,
-      dmMessage,
+      // With a module the server keeps a plain-text fallback derived from it.
+      dmMessage: replyMode === "module" ? "" : dmMessage,
+      messageModuleId: replyMode === "module" ? messageModuleId : null,
       openingDmEnabled,
       openingDmMessage: openingDmEnabled ? openingDmMessage : null,
       openingDmButtonLabel: openingDmEnabled ? openingDmButtonLabel : null,
@@ -863,8 +928,60 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
         </Section>
 
         <Section title={t("And then, they will get")}>
+          <div className="mb-3 flex flex-wrap gap-4 text-sm">
+            <label className="flex items-center gap-2">
+              <input
+                type="radio"
+                checked={replyMode === "text"}
+                onChange={() => setReplyMode("text")}
+              />
+              {t("a DM with a link")}
+            </label>
+            <label className="flex items-center gap-2">
+              <input
+                type="radio"
+                checked={replyMode === "module"}
+                onChange={() => {
+                  setReplyMode("module");
+                  setMessageModuleId((cur) => cur || moduleOptions[0]?.id || "");
+                }}
+              />
+              {t("a message module (carousel cards)")}
+            </label>
+          </div>
+          {replyMode === "module" ? (
+            <div className="rounded-lg border border-border p-3 space-y-2">
+              {moduleOptions.length === 0 ? (
+                <p className="text-sm text-muted">
+                  {t("No modules yet.")}{" "}
+                  <Link href="/modules/new" className="text-accent hover:underline">
+                    {t("Create one")}
+                  </Link>
+                </p>
+              ) : (
+                <>
+                  <select
+                    value={messageModuleId}
+                    onChange={(e) => setMessageModuleId(e.target.value)}
+                    className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-foreground focus:border-accent/40 focus:outline-none"
+                  >
+                    {moduleOptions.map((m) => (
+                      <option key={m.id} value={m.id}>
+                        {m.name} · {t("{count} cards", { count: m.cardCount })}
+                      </option>
+                    ))}
+                  </select>
+                  <p className="text-xs text-muted">
+                    {t("A reply to a comment carries the cards alone. The module's intro is added when the cards follow a button tap or a DM.")}{" "}
+                    <Link href="/modules" className="text-accent hover:underline">
+                      {t("Manage modules")}
+                    </Link>
+                  </p>
+                </>
+              )}
+            </div>
+          ) : (
           <div className="rounded-lg border border-border p-3 space-y-2">
-            <span className="text-sm text-foreground">{t("a DM with a link")}</span>
             <textarea
               value={dmMessage}
               onChange={(e) => setDmMessage(e.target.value)}
@@ -928,6 +1045,7 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
               {"{link}"} {t("inserts the tracked link;")} {"{username}"} {t("personalizes.")}
             </p>
           </div>
+          )}
           <div className="mt-3 rounded-lg border border-border p-3">
             <div className="flex items-center justify-between">
               <span className="text-sm text-foreground">
@@ -996,8 +1114,12 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
             openingDmEnabled={openingDmEnabled}
             openingDmMessage={openingDmMessage}
             openingDmButtonLabel={openingDmButtonLabel}
-            revealMessage={dmMessage}
-            hasLink={Boolean(trackedDestinationUrl.trim())}
+            revealMessage={
+              replyMode === "module"
+                ? `🃏 ${moduleOptions.find((m) => m.id === messageModuleId)?.name ?? ""}`
+                : dmMessage
+            }
+            hasLink={replyMode === "text" && Boolean(trackedDestinationUrl.trim())}
             linkButtonLabel={linkButtonLabel || "Open link"}
             linkUrl={trackedDestinationUrl.trim() || undefined}
             hasSecondLink={
@@ -1011,6 +1133,16 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
             followUpMessage={followUpMessage}
             followUpDelayMinutes={followUpDelayMinutes}
           />
+          {replyMode === "module" && modulePreview && (
+            <div className="mt-4">
+              <p className="mb-2 text-xs text-muted">{t("The cards they get")}</p>
+              <ModulePreview
+                introText={modulePreview.introText}
+                cards={modulePreview.cards}
+                showIntro={openingDmEnabled || requireFollow || dmTriggerEnabled}
+              />
+            </div>
+          )}
         </div>
       </div>
       </div>
