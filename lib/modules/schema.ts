@@ -6,13 +6,23 @@ export const MAX_CARD_BUTTONS = 3;
 export const CARD_TITLE_MAX = 80;
 export const CARD_SUBTITLE_MAX = 80;
 export const BUTTON_LABEL_MAX = 20;
+export const MAX_QUICK_REPLIES = 13;
+export const QUICK_REPLY_TITLE_MAX = 20;
 
 export const DEFAULT_UTM_SOURCE = "openreply";
 export const DEFAULT_UTM_MEDIUM = "dm";
 
+/** A card button opens a link (url) or answers with another module (moduleId). */
 export interface ModuleButton {
   label: string;
-  url: string;
+  url: string | null;
+  moduleId: string | null;
+}
+
+/** A chip under the reply; tapping it sends another module. */
+export interface ModuleQuickReply {
+  title: string;
+  moduleId: string;
 }
 
 export interface ModuleCard {
@@ -39,9 +49,27 @@ const optionalHttpsUrl = z
   .optional()
   .transform((value) => value || null);
 
-export const moduleButtonSchema = z.object({
-  label: z.string().trim().min(1).max(BUTTON_LABEL_MAX),
-  url: httpsUrl,
+const moduleRef = z
+  .string()
+  .trim()
+  .regex(/^[a-z0-9]{10,40}$/i, { message: "Invalid module" })
+  .optional()
+  .nullable()
+  .transform((value) => value || null);
+
+export const moduleButtonSchema = z
+  .object({
+    label: z.string().trim().min(1).max(BUTTON_LABEL_MAX),
+    url: optionalHttpsUrl,
+    moduleId: moduleRef,
+  })
+  .refine((button) => Boolean(button.url) !== Boolean(button.moduleId), {
+    message: "A button either opens a link or sends a module",
+  });
+
+export const moduleQuickReplySchema = z.object({
+  title: z.string().trim().min(1).max(QUICK_REPLY_TITLE_MAX),
+  moduleId: z.string().trim().regex(/^[a-z0-9]{10,40}$/i, { message: "Invalid module" }),
 });
 
 export const moduleCardSchema = z
@@ -75,6 +103,14 @@ export const moduleInputSchema = z.object({
     .nullable()
     .transform((value) => value || null),
   cards: z.array(moduleCardSchema).min(1).max(MAX_CARDS),
+  quickReplies: z.array(moduleQuickReplySchema).max(MAX_QUICK_REPLIES).default([]),
+  quickReplyPrompt: z
+    .string()
+    .trim()
+    .max(1000)
+    .optional()
+    .nullable()
+    .transform((value) => value || null),
   utmSource: utmValue.transform((value) => value || DEFAULT_UTM_SOURCE),
   utmMedium: utmValue.transform((value) => value || DEFAULT_UTM_MEDIUM),
   utmCampaign: utmValue.transform((value) => value || null),
@@ -96,14 +132,62 @@ export function parseStoredCards(value: unknown): ModuleCard[] {
   return cards;
 }
 
-/** The tracked slots a card has: its image link, then each button in order. */
+/**
+ * The tracked slots a card has: its image link, then each link button by its
+ * position (a module button has no link to track, but keeps its number so the
+ * other buttons' slots never shift).
+ */
 export function cardSlots(card: ModuleCard): { slot: ModuleSlot; url: string }[] {
   const slots: { slot: ModuleSlot; url: string }[] = [];
   if (card.imageLinkUrl) slots.push({ slot: "img", url: card.imageLinkUrl });
   card.buttons.slice(0, MAX_CARD_BUTTONS).forEach((button, index) => {
-    slots.push({ slot: `btn${index + 1}` as ModuleSlot, url: button.url });
+    if (button.url) slots.push({ slot: `btn${index + 1}` as ModuleSlot, url: button.url });
   });
   return slots;
+}
+
+/** Stored quick replies; invalid entries are dropped. */
+export function parseStoredQuickReplies(value: unknown): ModuleQuickReply[] {
+  if (!Array.isArray(value)) return [];
+  const replies: ModuleQuickReply[] = [];
+  for (const raw of value.slice(0, MAX_QUICK_REPLIES)) {
+    const parsed = moduleQuickReplySchema.safeParse(raw);
+    if (parsed.success) replies.push(parsed.data);
+  }
+  return replies;
+}
+
+/** Every module a module points at, through its buttons and quick replies. */
+export function referencedModuleIds(input: {
+  cards: ModuleCard[];
+  quickReplies: ModuleQuickReply[];
+}): string[] {
+  const ids = new Set<string>();
+  for (const card of input.cards) {
+    for (const button of card.buttons) if (button.moduleId) ids.add(button.moduleId);
+  }
+  for (const reply of input.quickReplies) ids.add(reply.moduleId);
+  return [...ids];
+}
+
+/** Payload of a button or quick reply that answers with a module. */
+export function moduleActionPayload(moduleId: string, automationId: string | undefined) {
+  return `mod:${moduleId}:${automationId || "-"}`;
+}
+
+/** Parse `mod:<moduleId>:<automationId>` / `rule:<automationId>`; null if malformed. */
+export function parseDmActionPayload(
+  payload: string
+): { type: "module"; moduleId: string; automationId: string | null } | { type: "rule"; automationId: string } | null {
+  const id = /^[a-z0-9]{10,40}$/i;
+  const parts = payload.split(":");
+  if (parts[0] === "mod" && parts.length === 3 && id.test(parts[1])) {
+    return { type: "module", moduleId: parts[1], automationId: id.test(parts[2]) ? parts[2] : null };
+  }
+  if (parts[0] === "rule" && parts.length === 2 && id.test(parts[1])) {
+    return { type: "rule", automationId: parts[1] };
+  }
+  return null;
 }
 
 /**

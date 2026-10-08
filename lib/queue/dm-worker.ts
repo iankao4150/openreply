@@ -10,15 +10,30 @@ import { UnrecoverableError, Worker, type Job } from "bullmq";
 import {
   getDMQueue,
   getRedisConnection,
+  DM_ACTION_JOB_NAME,
   MESSAGE_JOB_NAME,
   POSTBACK_JOB_NAME,
   FOLLOWUP_JOB_NAME,
   type DmQueueJob,
   type ProcessCommentJob,
+  type ProcessDmActionJob,
   type ProcessMessageJob,
   type ProcessPostbackJob,
   type ProcessFollowUpJob,
 } from "./client";
+import { liveAt } from "@/lib/campaigns/schedule";
+import { isHumanHandling, markAutomatedSend } from "@/lib/ops/human-pause";
+import {
+  isOptedOut,
+  OPT_IN_CONFIRMATION,
+  OPT_OUT_CONFIRMATION,
+  optOutCommand,
+  setOptOut,
+} from "@/lib/ops/opt-out";
+import { setPendingModule, takePendingModule } from "@/lib/ops/pending-reply";
+
+const DEFAULT_TEXT_OPENER =
+  "Hi {username}! Reply with any message and I'll send it to you right away 👇";
 import { prisma } from "@/lib/db/client";
 import {
   MetaApiError,
@@ -59,13 +74,17 @@ import {
   sendModuleAsPrivateReply,
   type SendableModule,
 } from "@/lib/modules/send";
+import { parseDmActionPayload } from "@/lib/modules/schema";
 
 // Loaded with every campaign so a module reply can be sent without a second query.
 const MESSAGE_MODULE_INCLUDE = {
   select: {
     id: true,
+    name: true,
     introText: true,
     cards: true,
+    quickReplies: true,
+    quickReplyPrompt: true,
     links: { select: { slug: true, card: true, slot: true } },
   },
 } as const;
@@ -225,6 +244,8 @@ async function sendRevealDirectMessage({
   commenterName: string | null;
   context: string;
 }): Promise<void> {
+  await markAutomatedSend(automation.instagramAccount.instagramId, userId);
+
   if (automation.messageModule) {
     const delivery = await sendModuleAsDirectMessage({
       context: accessToken,
@@ -333,6 +354,7 @@ async function processComment(job: Job<ProcessCommentJob>): Promise<void> {
         ...(originalMediaId ? [{ postId: originalMediaId }] : []),
         { matchAnyPost: true },
       ],
+      AND: liveAt(new Date()),
       isActive: true,
       instagramAccount: {
         instagramId: instagramAccountId,
@@ -399,6 +421,39 @@ async function processComment(job: Job<ProcessCommentJob>): Promise<void> {
       (alreadyPublicReplied || existingLog?.publicReplyDeliveryUnconfirmed || !automation.publicReplyEnabled)
     ) {
       continue;
+    }
+
+    // Once per person: someone this campaign already answered gets nothing
+    // more for later comments — no public reply and no DM.
+    if (automation.oncePerUser && !existingLog) {
+      const answered = await prisma.dmLog.findFirst({
+        where: {
+          automationId: automation.id,
+          commenterId,
+          status: "SENT",
+          commentId: { not: commentId },
+        },
+        select: { id: true },
+      });
+      if (answered) {
+        await prisma.dmLog.upsert({
+          where: { automationId_commentId: { automationId: automation.id, commentId } },
+          create: {
+            workspaceId: automation.workspaceId,
+            automationId: automation.id,
+            instagramAccountId: automation.instagramAccountId,
+            commenterId,
+            commenterName,
+            commentText,
+            commentId,
+            matchedKeyword: matchResult.matchedKeyword,
+            status: "SKIPPED_DEDUP",
+            errorMessage: "Already answered this person (once per person)",
+          },
+          update: {},
+        });
+        continue;
+      }
     }
 
     if (!hasInstagramCredentials(automation.instagramAccount)) {
@@ -533,6 +588,15 @@ async function processComment(job: Job<ProcessCommentJob>): Promise<void> {
     // DM already sent on an earlier pass; the public reply retry above was all
     // this run needed. Don't re-send the DM.
     if (!needsDm) continue;
+
+    // Someone who asked to stop automated DMs gets none, even for a comment.
+    if (await isOptedOut(automation.instagramAccountId, commenterId)) {
+      await prisma.dmLog.update({
+        where: { automationId_commentId: { automationId: automation.id, commentId } },
+        data: { status: "SKIPPED_DEDUP", errorMessage: "Opted out of automated messages" },
+      });
+      continue;
+    }
 
     // Meta allows exactly ONE private reply per comment, ever — across every
     // campaign. When several campaigns match the same comment (duplicated
@@ -695,6 +759,7 @@ async function processComment(job: Job<ProcessCommentJob>): Promise<void> {
       await releaseWorkspaceDMReservation(automation.workspaceId, usage.periodStart);
       continue;
     }
+    await markAutomatedSend(instagramAccountId, commenterId);
     let delivered = false;
     try {
       if (useOpeningDm) {
@@ -730,6 +795,19 @@ async function processComment(job: Job<ProcessCommentJob>): Promise<void> {
           payload: `followcheck:${automation.id}`,
           postId: mediaId,
         });
+      } else if (automation.messageModule && automation.commentReplyStyle === "TEXT_FIRST") {
+        // Plain text reaches everyone; the cards follow once they write back.
+        await sendPrivateReply({
+          context: accessToken,
+          instagramAccountId: automation.instagramAccount.instagramId,
+          commentId,
+          message: renderMessageWithoutLink({
+            message: automation.textOpener || DEFAULT_TEXT_OPENER,
+            commenterName,
+          }),
+          postId: mediaId,
+        });
+        await setPendingModule(instagramAccountId, commenterId, automation.id);
       } else if (automation.messageModule) {
         const delivery = await sendModuleAsPrivateReply({
           context: accessToken,
@@ -911,8 +989,10 @@ async function sendFollowRecheckAck({
       "NX"
     );
     if (first !== "OK") return;
-    const send = () =>
-      sendDirectMessage({ context, instagramAccountId, userId, message });
+    const send = async () => {
+      await markAutomatedSend(instagramAccountId, userId);
+      return sendDirectMessage({ context, instagramAccountId, userId, message });
+    };
     // Its own id: the tap's id is claimed later by the link or prompt that
     // the re-check sends, and claiming it here would suppress that message.
     // Without an id the Redis NX above is the only dedupe.
@@ -1109,8 +1189,9 @@ async function processPostback(job: Job<ProcessPostbackJob>): Promise<void> {
       try {
         await sendPostbackOnce({
           operationId,
-          send: () =>
-            sendDirectMessageWithButton({
+          send: async () => {
+            await markAutomatedSend(automation.instagramAccount.instagramId, userId);
+            return sendDirectMessageWithButton({
               context: accessToken,
               instagramAccountId: automation.instagramAccount.instagramId,
               userId: userId,
@@ -1118,7 +1199,8 @@ async function processPostback(job: Job<ProcessPostbackJob>): Promise<void> {
               buttonTitle:
                 automation.followPromptButtonLabel || "i'm following",
               payload: `followcheck:${automation.id}`,
-            }),
+            });
+          },
         });
       } catch (error) {
         console.log(
@@ -1301,6 +1383,8 @@ async function processFollowUp(job: Job<ProcessFollowUpJob>): Promise<void> {
   }
 
   try {
+    if (await isOptedOut(automation.instagramAccountId, userId)) return;
+    await markAutomatedSend(instagramAccountId, userId);
     await sendDirectMessage({
       context: accessToken,
       instagramAccountId: automation.instagramAccount.instagramId,
@@ -1329,12 +1413,109 @@ async function processFollowUp(job: Job<ProcessFollowUpJob>): Promise<void> {
 async function processMessage(job: Job<ProcessMessageJob>): Promise<void> {
   const { instagramAccountId, messageId, messageText, senderId } = job.data;
 
+  const account = await prisma.instagramAccount.findFirst({
+    where: {
+      instagramId: instagramAccountId,
+      ...(job.data.accountConnectionId ? { id: job.data.accountConnectionId } : {}),
+    },
+  });
+  if (!account) return;
+
+  // STOP / START: opt out of (or back into) every automated DM.
+  const command = optOutCommand(messageText);
+  if (command) {
+    await setOptOut(account.id, senderId, command === "stop");
+    if (hasInstagramCredentials(account)) {
+      let context: InstagramContext | null = null;
+      try {
+        context = await createInstagramContext(account, `${job.id}:optout`);
+      } catch {
+        context = null;
+      }
+      if (context) {
+        await markAutomatedSend(instagramAccountId, senderId);
+        try {
+          await sendDirectMessage({
+            context,
+            instagramAccountId,
+            userId: senderId,
+            message: command === "stop" ? OPT_OUT_CONFIRMATION : OPT_IN_CONFIRMATION,
+          });
+        } catch (error) {
+          // The opt-out itself is recorded; only the confirmation is lost.
+          console.warn("[DM Worker] Opt-out confirmation not sent:", formatError(error));
+        }
+      }
+    }
+    return;
+  }
+  if (await isOptedOut(account.id, senderId)) return;
+
+  // A "text first" comment reply promised the cards on their next message.
+  const pendingAutomationId = await takePendingModule(instagramAccountId, senderId);
+  if (pendingAutomationId) {
+    const pending = await prisma.automation.findFirst({
+      where: { id: pendingAutomationId, instagramAccountId: account.id },
+      include: {
+        instagramAccount: true,
+        trackedLinks: {
+          select: { slug: true, label: true, destinationUrl: true },
+          orderBy: TRACKED_LINK_ORDER,
+        },
+        messageModule: MESSAGE_MODULE_INCLUDE,
+      },
+    });
+    if (pending && hasInstagramCredentials(account)) {
+      const commentId = `dm:${messageId}`;
+      const priorLog = await prisma.dmLog.findFirst({
+        where: { automationId: pending.id, commenterId: senderId },
+        select: { commenterName: true },
+      });
+      const logBase = {
+        workspaceId: pending.workspaceId,
+        automationId: pending.id,
+        instagramAccountId: pending.instagramAccountId,
+        commenterId: senderId,
+        commenterName: priorLog?.commenterName ?? null,
+        commentText: messageText,
+        commentId,
+      };
+      try {
+        const context = await createInstagramContext(account, `${job.id}:pending`);
+        await sendRevealDirectMessage({
+          accessToken: context,
+          automation: pending,
+          userId: senderId,
+          commenterName: priorLog?.commenterName ?? null,
+          context: "text-first follow-through",
+        });
+        await prisma.dmLog.upsert({
+          where: { automationId_commentId: { automationId: pending.id, commentId } },
+          create: { ...logBase, status: "SENT", dmSentAt: new Date() },
+          update: { status: "SENT", dmSentAt: new Date(), errorMessage: null },
+        });
+        return;
+      } catch (error) {
+        // Keep the promise for a retry of this job.
+        try {
+          await setPendingModule(instagramAccountId, senderId, pending.id);
+        } catch {
+          // Redis is down too; the retry falls back to keyword rules.
+        }
+        throw error;
+      }
+    }
+  }
+
+  const now = new Date();
   const automations = await prisma.automation.findMany({
     where: {
       ...connectionScope(job.data),
       dmTriggerEnabled: true,
       isActive: true,
       instagramAccount: { instagramId: instagramAccountId },
+      // Story-mention and ice-breaker rules are not keyword rules.
+      AND: [...liveAt(now), { OR: [{ dmOnly: false }, { dmRuleType: "KEYWORD" }] }],
     },
     include: {
       instagramAccount: true,
@@ -1349,6 +1530,8 @@ async function processMessage(job: Job<ProcessMessageJob>): Promise<void> {
   });
 
   const dedupeId = `dm:${messageId}`;
+  // A person replying by hand pauses keyword replies in this conversation.
+  const humanHandling = await isHumanHandling(instagramAccountId, senderId);
 
   for (const automation of automations) {
     const matchResult = automation.matchAnyWord
@@ -1389,6 +1572,42 @@ async function processMessage(job: Job<ProcessMessageJob>): Promise<void> {
       commentId: dedupeId,
       matchedKeyword: matchResult.matchedKeyword,
     };
+
+    // Reasons to stay quiet that are not failures: a person is handling the
+    // chat, this person was already answered (once per person), or they
+    // triggered the same rule moments ago (cooldown).
+    let skipReason: string | null = null;
+    if (humanHandling) {
+      skipReason = "A person is handling this conversation";
+    } else if (automation.oncePerUser || automation.cooldownMinutes > 0) {
+      const since = automation.oncePerUser
+        ? undefined
+        : new Date(now.getTime() - automation.cooldownMinutes * 60_000);
+      const recent = await prisma.dmLog.findFirst({
+        where: {
+          automationId: automation.id,
+          commenterId: senderId,
+          status: "SENT",
+          commentId: { not: dedupeId },
+          ...(since ? { createdAt: { gt: since } } : {}),
+        },
+        select: { id: true },
+      });
+      if (recent) {
+        skipReason = automation.oncePerUser
+          ? "Already answered this person (once per person)"
+          : `Answered this person within the last ${automation.cooldownMinutes} min (cooldown)`;
+      }
+    }
+    if (skipReason) {
+      await prisma.dmLog.upsert({
+        where: { automationId_commentId: { automationId: automation.id, commentId: dedupeId } },
+        create: { ...logBase, status: "SKIPPED_DEDUP", errorMessage: skipReason },
+        update: {},
+      });
+      // One reply per DM: the oldest matching rule decides, even by staying quiet.
+      break;
+    }
 
     if (!hasInstagramCredentials(automation.instagramAccount)) {
       await prisma.dmLog.upsert({
@@ -1487,6 +1706,7 @@ async function processMessage(job: Job<ProcessMessageJob>): Promise<void> {
       continue;
     }
 
+    await markAutomatedSend(instagramAccountId, senderId);
     try {
       if (sendFollowPrompt) {
         const promptText = renderMessageWithoutLink({
@@ -1552,6 +1772,8 @@ async function processMessage(job: Job<ProcessMessageJob>): Promise<void> {
           errorMessage: null,
         },
       });
+      // One reply per DM: when rules overlap, the oldest one answers.
+      break;
     } catch (error) {
       await releaseWorkspaceDMReservation(
         automation.workspaceId,
@@ -1584,6 +1806,221 @@ async function processMessage(job: Job<ProcessMessageJob>): Promise<void> {
   }
 }
 
+// A story mention rule answers each person at most once a day unless the rule
+// sets its own cooldown: people who post about the brand often should not get
+// the same DM every time.
+const STORY_MENTION_DEFAULT_COOLDOWN_MINUTES = 24 * 60;
+
+/**
+ * Answer a tap (a module button, a quick reply or an ice breaker) or a story
+ * mention. Taps are explicit requests, so they are answered even while a
+ * person handles the chat; story mentions are not.
+ */
+async function processDmAction(job: Job<ProcessDmActionJob>): Promise<void> {
+  const { instagramAccountId, userId, kind, payload, mid } = job.data;
+  const now = new Date();
+
+  const account = await prisma.instagramAccount.findFirst({
+    where: {
+      instagramId: instagramAccountId,
+      ...(job.data.accountConnectionId ? { id: job.data.accountConnectionId } : {}),
+    },
+  });
+  if (!account || !hasInstagramCredentials(account)) return;
+
+  const automationInclude = {
+    instagramAccount: true,
+    trackedLinks: {
+      select: { slug: true, label: true, destinationUrl: true },
+      orderBy: TRACKED_LINK_ORDER,
+    },
+    messageModule: MESSAGE_MODULE_INCLUDE,
+  } as const;
+
+  let automation;
+  let tappedModule: (SendableModule & { name: string }) | null = null;
+
+  if (kind === "story") {
+    if (await isHumanHandling(instagramAccountId, userId)) return;
+    if (await isOptedOut(account.id, userId)) return;
+    automation = await prisma.automation.findFirst({
+      where: {
+        instagramAccountId: account.id,
+        isActive: true,
+        dmOnly: true,
+        dmRuleType: "STORY_MENTION",
+        AND: liveAt(now),
+      },
+      include: automationInclude,
+      orderBy: { createdAt: "asc" },
+    });
+  } else {
+    const action = payload ? parseDmActionPayload(payload) : null;
+    if (!action) return;
+    if (action.type === "rule") {
+      // An ice breaker (or any rule button): the rule must still be live.
+      automation = await prisma.automation.findFirst({
+        where: {
+          id: action.automationId,
+          instagramAccountId: account.id,
+          isActive: true,
+          dmOnly: true,
+          AND: liveAt(now),
+        },
+        include: automationInclude,
+      });
+    } else {
+      // A module button or quick reply: answer even if the campaign that sent
+      // it has since ended — the person is mid-conversation.
+      tappedModule = await prisma.messageModule.findFirst({
+        where: { id: action.moduleId, workspaceId: account.workspaceId },
+        ...MESSAGE_MODULE_INCLUDE,
+      });
+      if (!tappedModule) return;
+      automation = action.automationId
+        ? await prisma.automation.findFirst({
+            where: { id: action.automationId, instagramAccountId: account.id },
+            include: automationInclude,
+          })
+        : null;
+    }
+  }
+
+  if (!automation && !tappedModule) return;
+
+  const commentId = `${kind}:${mid}`;
+  const commentText =
+    kind === "story"
+      ? "[Story mention]"
+      : tappedModule
+        ? `[Tapped] ${tappedModule.name}`
+        : `[Tapped] ${automation?.iceBreakerQuestion ?? automation?.name ?? ""}`;
+
+  if (automation) {
+    const existing = await prisma.dmLog.findUnique({
+      where: { automationId_commentId: { automationId: automation.id, commentId } },
+    });
+    if (existing?.status === "SENT" || existing?.dmDeliveryUnconfirmed) return;
+
+    // Cooldown and once-per-person apply to rules a person did not ask for
+    // with a tap on our own reply.
+    if (!tappedModule) {
+      const cooldown =
+        automation.cooldownMinutes > 0
+          ? automation.cooldownMinutes
+          : kind === "story"
+            ? STORY_MENTION_DEFAULT_COOLDOWN_MINUTES
+            : 0;
+      if (automation.oncePerUser || cooldown > 0) {
+        const recent = await prisma.dmLog.findFirst({
+          where: {
+            automationId: automation.id,
+            commenterId: userId,
+            status: "SENT",
+            ...(automation.oncePerUser ? {} : { createdAt: { gt: new Date(now.getTime() - cooldown * 60_000) } }),
+          },
+          select: { id: true },
+        });
+        if (recent) {
+          await prisma.dmLog.upsert({
+            where: { automationId_commentId: { automationId: automation.id, commentId } },
+            create: {
+              workspaceId: automation.workspaceId,
+              automationId: automation.id,
+              instagramAccountId: automation.instagramAccountId,
+              commenterId: userId,
+              commentText,
+              commentId,
+              status: "SKIPPED_DEDUP",
+              errorMessage: automation.oncePerUser
+                ? "Already answered this person (once per person)"
+                : `Answered this person within the last ${cooldown} min (cooldown)`,
+            },
+            update: {},
+          });
+          return;
+        }
+      }
+    }
+  }
+
+  let accessToken: InstagramContext;
+  try {
+    accessToken = await createInstagramContext(account, `${job.id}:${commentId}`);
+  } catch {
+    return;
+  }
+
+  const priorLog = await prisma.dmLog.findFirst({
+    where: { instagramAccountId: account.id, commenterId: userId, commenterName: { not: null } },
+    select: { commenterName: true },
+    orderBy: { createdAt: "desc" },
+  });
+  const commenterName = priorLog?.commenterName ?? null;
+
+  const logBase = automation
+    ? {
+        workspaceId: automation.workspaceId,
+        automationId: automation.id,
+        instagramAccountId: automation.instagramAccountId,
+        commenterId: userId,
+        commenterName,
+        commentText,
+        commentId,
+      }
+    : null;
+
+  try {
+    if (tappedModule) {
+      await markAutomatedSend(instagramAccountId, userId);
+      await sendModuleAsDirectMessage({
+        context: accessToken,
+        instagramAccountId,
+        userId,
+        module: tappedModule,
+        automationId: automation?.id ?? "",
+        commenterName,
+        fallbackText: tappedModule.name,
+      });
+    } else if (automation) {
+      await sendRevealDirectMessage({
+        accessToken,
+        automation,
+        userId,
+        commenterName,
+        context: kind === "story" ? "story mention" : "rule tap",
+      });
+    }
+    if (logBase) {
+      await prisma.dmLog.upsert({
+        where: { automationId_commentId: { automationId: logBase.automationId, commentId } },
+        create: { ...logBase, status: "SENT", dmSentAt: new Date() },
+        update: { status: "SENT", dmSentAt: new Date(), errorMessage: null },
+      });
+    }
+  } catch (error) {
+    if (logBase) {
+      await prisma.dmLog.upsert({
+        where: { automationId_commentId: { automationId: logBase.automationId, commentId } },
+        create: {
+          ...logBase,
+          status: "FAILED",
+          attempts: job.attemptsMade + 1,
+          errorMessage: formatError(error),
+          dmDeliveryUnconfirmed: isDeliveryUnconfirmed(error),
+        },
+        update: {
+          status: "FAILED",
+          attempts: job.attemptsMade + 1,
+          errorMessage: formatError(error),
+          dmDeliveryUnconfirmed: isDeliveryUnconfirmed(error),
+        },
+      });
+    }
+    throw error;
+  }
+}
+
 async function dispatchJob(job: Job<DmQueueJob>): Promise<void> {
   if (job.name === POSTBACK_JOB_NAME) {
     return processPostback(job as Job<ProcessPostbackJob>);
@@ -1593,6 +2030,9 @@ async function dispatchJob(job: Job<DmQueueJob>): Promise<void> {
   }
   if (job.name === MESSAGE_JOB_NAME) {
     return processMessage(job as Job<ProcessMessageJob>);
+  }
+  if (job.name === DM_ACTION_JOB_NAME) {
+    return processDmAction(job as Job<ProcessDmActionJob>);
   }
   return processComment(job as Job<ProcessCommentJob>);
 }

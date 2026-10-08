@@ -8,6 +8,7 @@ const campaign = (overrides: Partial<ConflictCandidate>): ConflictCandidate => (
   instagramAccountId: "ig",
   isActive: true,
   dmOnly: false,
+  dmRuleType: "KEYWORD",
   postId: "post1",
   matchAnyPost: false,
   matchAnyWord: false,
@@ -38,6 +39,21 @@ describe("campaign conflicts", () => {
     const rule = campaign({ dmOnly: true, postId: null, keywords: ["TEST"] });
     const other = campaign({ id: "b", name: "B", postId: "post9", keywords: ["test"], dmTriggerEnabled: true });
     expect(findConflicts(rule, [other])).toEqual([{ otherId: "b", otherName: "B", kind: "dm" }]);
+  });
+});
+
+describe("story mention and ice breaker rules", () => {
+  it("flags a second story-mention rule but never keyword-matches them", () => {
+    const story = campaign({ dmOnly: true, dmRuleType: "STORY_MENTION", postId: null, keywords: [] });
+    expect(findConflicts(story, [{ ...story, id: "b", name: "B" }])).toEqual([{ otherId: "b", otherName: "B", kind: "story" }]);
+    const keywordRule = campaign({ id: "k", dmOnly: true, postId: null, keywords: ["梅西"] });
+    expect(findConflicts(keywordRule, [{ ...story, id: "s" }])).toEqual([]);
+  });
+
+  it("does not treat ice breaker rules as keyword rules", () => {
+    const ice = campaign({ dmOnly: true, dmRuleType: "ICE_BREAKER", postId: null, keywords: [], matchAnyWord: false });
+    const keywordRule = campaign({ id: "k", dmOnly: true, postId: null, keywords: ["梅西"], matchAnyWord: true });
+    expect(findConflicts(keywordRule, [{ ...ice, id: "i" }])).toEqual([]);
   });
 });
 

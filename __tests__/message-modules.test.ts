@@ -48,7 +48,7 @@ const card = (overrides: Partial<ModuleCard> = {}): ModuleCard => ({
   title: "Messi #256",
   subtitle: "1 張 NT$499",
   imageLinkUrl: "https://shop.example.com/p/256",
-  buttons: [{ label: "選擇張數", url: "https://shop.example.com/p/256" }],
+  buttons: [{ label: "選擇張數", url: "https://shop.example.com/p/256", moduleId: null }],
   ...overrides,
 });
 
@@ -74,10 +74,10 @@ describe("module input validation", () => {
   });
 
   it("caps buttons at three and labels at Meta's 20 characters", () => {
-    const four = Array.from({ length: 4 }, () => ({ label: "Buy", url: "https://a.b" }));
+    const four = Array.from({ length: 4 }, () => ({ label: "Buy", url: "https://a.b", moduleId: null }));
     expect(moduleInputSchema.safeParse({ name: "x", cards: [card({ buttons: four })] }).success).toBe(false);
     expect(
-      moduleInputSchema.safeParse({ name: "x", cards: [card({ buttons: [{ label: "x".repeat(21), url: "https://a.b" }] })] }).success
+      moduleInputSchema.safeParse({ name: "x", cards: [card({ buttons: [{ label: "x".repeat(21), url: "https://a.b", moduleId: null }] })] }).success
     ).toBe(false);
   });
 
@@ -111,7 +111,7 @@ describe("UTM tagging", () => {
 
   it("builds one tracked link per card image and button", () => {
     const links = desiredModuleLinks(
-      [card(), card({ imageLinkUrl: null, buttons: [{ label: "A", url: "https://a.b/1" }, { label: "B", url: "https://a.b/2" }] })],
+      [card(), card({ imageLinkUrl: null, buttons: [{ label: "A", url: "https://a.b/1", moduleId: null }, { label: "B", url: "https://a.b/2", moduleId: null }] })],
       { utmSource: "openreply", utmMedium: "dm", utmCampaign: "messi256" }
     );
     expect(links.map((l) => `${l.card}:${l.slot}`)).toEqual(["1:img", "1:btn1", "2:btn1", "2:btn2"]);
@@ -131,14 +131,24 @@ describe("rendering cards", () => {
     expect(element.image_url).toBe("https://cdn.example.com/1.png");
     expect(element.default_action?.url).toBe(moduleLinkUrl("s-img", ctx));
     expect(element.buttons?.[0]).toEqual({ type: "web_url", title: "選擇張數", url: moduleLinkUrl("s-btn", ctx) });
-    const tracked = new URL(element.buttons![0].url);
+    const button = element.buttons![0];
+    const tracked = new URL(button.type === "web_url" ? button.url : "");
     expect(tracked.pathname).toBe("/m/s-btn");
     expect(tracked.searchParams.get("a")).toBe("auto1");
   });
 
   it("falls back to the raw link when a slot has no tracked record yet", () => {
     const [element] = buildCardElements([card()], [], ctx);
-    expect(element.buttons?.[0].url).toBe("https://shop.example.com/p/256");
+    expect(element.buttons?.[0]).toMatchObject({ url: "https://shop.example.com/p/256" });
+  });
+
+  it("turns a module button into a postback that names the module and campaign", () => {
+    const [element] = buildCardElements(
+      [card({ buttons: [{ label: "看帽T", url: null, moduleId: "modulehoodie123" }] })],
+      [],
+      ctx
+    );
+    expect(element.buttons?.[0]).toEqual({ type: "postback", title: "看帽T", payload: "mod:modulehoodie123:auto1" });
   });
 
   it("personalizes {username} in titles", () => {

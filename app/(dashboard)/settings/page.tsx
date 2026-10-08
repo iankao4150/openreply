@@ -2,6 +2,7 @@
 
 import LanguageSwitcher from "@/components/language-switcher";
 import { useI18n } from "@/lib/i18n/provider";
+import PersistentMenuEditor from "@/components/persistent-menu-editor";
 import { Suspense, useEffect, useState } from "react";
 import type { AccountOption } from "@/components/account-select";
 import { ZernioConnection } from "@/components/zernio-connection";
@@ -24,6 +25,8 @@ interface SettingsData {
       provider?: "META" | "ZERNIO";
       tokenExpiresAt: string | null;
       accessExpiresAt?: string | null;
+      humanPauseMinutes?: number;
+      persistentMenu?: { title: string; url: string | null; moduleId: string | null }[];
       webhookSubscribed: boolean;
     }
   >;
@@ -54,6 +57,17 @@ export default function SettingsPage() {
   const { t, label, locale } = useI18n();
   // Captured once per visit: the expiry warning only needs day precision.
   const [now] = useState(() => Date.now());
+  const [pauseSaved, setPauseSaved] = useState<string | null>(null);
+
+  async function saveHumanPause(accountId: string, minutes: number) {
+    const res = await fetch(`/api/instagram/accounts?id=${accountId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ humanPauseMinutes: minutes }),
+    });
+    const data = await res.json().catch(() => null);
+    if (data?.success) setPauseSaved(accountId);
+  }
   const [data, setData] = useState<SettingsData | null>(null);
   const [membersData, setMembersData] = useState<WorkspaceMembersData | null>(
     null
@@ -211,6 +225,35 @@ export default function SettingsPage() {
                       : t("not available")}</>}{" "}
                     · {account.webhookSubscribed ? t("Webhook ready") : t("Webhook pending")}
                   </p>
+                  {account.provider !== "ZERNIO" && (
+                    <label className="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted">
+                      {t("When someone on your team replies by hand, pause automatic DM replies to that person for")}
+                      <select
+                        defaultValue={account.humanPauseMinutes ?? 30}
+                        onChange={(e) => void saveHumanPause(account.id, Number(e.target.value))}
+                        className="rounded border border-border bg-surface px-2 py-1 text-xs text-foreground"
+                      >
+                        {[0, 15, 30, 60, 120, 240, 1440].map((minutes) => (
+                          <option key={minutes} value={minutes}>
+                            {minutes === 0
+                              ? t("Never pause")
+                              : minutes < 60
+                                ? t("{count} minutes", { count: minutes })
+                                : t("{count} hours", { count: minutes / 60 })}
+                          </option>
+                        ))}
+                      </select>
+                      {pauseSaved === account.id && <span className="text-success">{t("Changes saved")}</span>}
+                    </label>
+                  )}
+                  {account.provider !== "ZERNIO" && (
+                    <PersistentMenuEditor accountId={account.id} initial={account.persistentMenu ?? []} />
+                  )}
+                  {account.provider !== "ZERNIO" && (
+                    <p className="mt-2 text-xs text-muted">
+                      {t("People can send STOP (or 停止) to stop automated DMs and START (or 開始) to turn them back on, as Meta requires.")}
+                    </p>
+                  )}
                   {account.accessExpiresAt &&
                     new Date(account.accessExpiresAt).getTime() - now < 14 * 86_400_000 && (
                       <p className="mt-1 text-xs font-medium text-warning">

@@ -28,6 +28,13 @@ import {
 } from "@/lib/import-queue";
 
 type TriggerScope = "specific" | "any" | "next";
+
+/** An ISO date as a datetime-local value in the browser's zone. */
+function toLocalInput(value: string | null): string {
+  if (!value) return "";
+  const date = new Date(value);
+  return new Date(date.getTime() - date.getTimezoneOffset() * 60_000).toISOString().slice(0, 16);
+}
 type MatchMode = "specific" | "any";
 
 interface LoadedCampaign {
@@ -46,6 +53,11 @@ interface LoadedCampaign {
   openingDmButtonLabel: string | null;
   linkButtonLabel: string | null;
   messageModuleId?: string | null;
+  startsAt?: string | null;
+  endsAt?: string | null;
+  oncePerUser?: boolean;
+  commentReplyStyle?: "CARDS" | "TEXT_FIRST";
+  textOpener?: string | null;
   requireFollow: boolean;
   followPromptMessage: string | null;
   followPromptButtonLabel: string | null;
@@ -181,6 +193,7 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
   const [modulePreview, setModulePreview] = useState<{
     introText: string;
     cards: PreviewCard[];
+    quickReplies: string[];
   } | null>(null);
   const [linkOpen, setLinkOpen] = useState(false);
   const [trackedDestinationUrl, setTrackedDestinationUrl] = useState("");
@@ -195,6 +208,14 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
   const [followUpEnabled, setFollowUpEnabled] = useState(false);
   const [followUpMessage, setFollowUpMessage] = useState("");
   const [followUpDelayMinutes, setFollowUpDelayMinutes] = useState(0);
+  // Optional schedule (datetime-local strings in the browser's zone) and
+  // answering each person once.
+  const [startsAt, setStartsAt] = useState("");
+  const [endsAt, setEndsAt] = useState("");
+  const [oncePerUser, setOncePerUser] = useState(false);
+  // How a module answers a comment: the cards themselves, or a text first.
+  const [commentReplyStyle, setCommentReplyStyle] = useState<"CARDS" | "TEXT_FIRST">("CARDS");
+  const [textOpener, setTextOpener] = useState("");
 
   const [previewTab, setPreviewTab] = useState<PreviewTab>("dm");
 
@@ -265,8 +286,9 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
             title: string;
             subtitle: string | null;
             imageLinkUrl: string | null;
-            buttons: { label: string; url: string }[];
+            buttons: { label: string; url: string | null; moduleId: string | null }[];
           }[];
+          quickReplies?: { title: string }[];
         };
         setModulePreview({
           introText: loaded.introText ?? "",
@@ -275,8 +297,14 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
             title: card.title,
             subtitle: card.subtitle ?? "",
             imageLinkUrl: card.imageLinkUrl ?? "",
-            buttons: card.buttons,
+            buttons: card.buttons.map((b) => ({
+              label: b.label,
+              url: b.url ?? "",
+              kind: b.moduleId ? ("module" as const) : ("url" as const),
+              moduleId: b.moduleId ?? "",
+            })),
           })),
+          quickReplies: (loaded.quickReplies ?? []).map((r) => r.title),
         });
       })
       .catch(() => {});
@@ -350,6 +378,11 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
         setFollowUpEnabled(c.followUpEnabled ?? false);
         setFollowUpMessage(c.followUpMessage ?? "");
         setFollowUpDelayMinutes(c.followUpDelayMinutes ?? 0);
+        setStartsAt(toLocalInput(c.startsAt ?? null));
+        setEndsAt(toLocalInput(c.endsAt ?? null));
+        setOncePerUser(c.oncePerUser ?? false);
+        setCommentReplyStyle(c.commentReplyStyle ?? "CARDS");
+        setTextOpener(c.textOpener ?? "");
       })
       .catch(() => setNotFound(true))
       .finally(() => setLoading(false));
@@ -459,6 +492,8 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
       return setError(t("Choose a message module."));
     if (openingDmEnabled && (!openingDmMessage.trim() || !openingDmButtonLabel.trim()))
       return setError(t("Your opening DM needs a message and a button label."));
+    if (startsAt && endsAt && new Date(endsAt) <= new Date(startsAt))
+      return setError(t("The end must be after the start."));
 
     setSaving(true);
 
@@ -494,6 +529,11 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
       followUpEnabled,
       followUpMessage: followUpEnabled ? followUpMessage.trim() : "",
       followUpDelayMinutes: followUpEnabled ? followUpDelayMinutes : 0,
+      startsAt: startsAt ? new Date(startsAt).toISOString() : null,
+      endsAt: endsAt ? new Date(endsAt).toISOString() : null,
+      oncePerUser,
+      commentReplyStyle,
+      textOpener: textOpener.trim() || null,
       isActive: activeValue,
     };
 
@@ -863,6 +903,36 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
           )}
         </Section>
 
+        <Section title={t("Schedule and limits")}>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <label className="block">
+              <span className="mb-1 block text-xs text-muted">{t("Starts (optional)")}</span>
+              <input
+                type="datetime-local"
+                value={startsAt}
+                onChange={(e) => setStartsAt(e.target.value)}
+                className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-foreground focus:border-accent/40 focus:outline-none"
+              />
+            </label>
+            <label className="block">
+              <span className="mb-1 block text-xs text-muted">{t("Ends (optional)")}</span>
+              <input
+                type="datetime-local"
+                value={endsAt}
+                onChange={(e) => setEndsAt(e.target.value)}
+                className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-foreground focus:border-accent/40 focus:outline-none"
+              />
+            </label>
+          </div>
+          <p className="mt-2 text-xs text-muted">
+            {t("Outside these times the campaign answers nothing new. Buttons in replies already sent keep working.")}
+          </p>
+          <label className="mt-3 flex items-center gap-2 text-sm">
+            <input type="checkbox" checked={oncePerUser} onChange={(e) => setOncePerUser(e.target.checked)} />
+            {t("Reply to each person only once (later comments from them are skipped)")}
+          </label>
+        </Section>
+
         <Section title={t("They will get")}>
           <div className="rounded-lg border border-border p-3">
             <div className="flex items-center justify-between">
@@ -971,6 +1041,47 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
                       </option>
                     ))}
                   </select>
+                  <div className="space-y-2 rounded-lg border border-border p-3">
+                    <p className="text-xs font-medium text-foreground">{t("How the comment is answered")}</p>
+                    <label className="flex items-start gap-2 text-sm">
+                      <input
+                        type="radio"
+                        className="mt-1"
+                        checked={commentReplyStyle === "CARDS"}
+                        onChange={() => setCommentReplyStyle("CARDS")}
+                      />
+                      <span>
+                        {t("Send the cards right away")}
+                        <span className="block text-xs text-muted">
+                          {t("Most like OmniChat. Instagram may refuse cards for people who don't follow you; they then get nothing.")}
+                        </span>
+                      </span>
+                    </label>
+                    <label className="flex items-start gap-2 text-sm">
+                      <input
+                        type="radio"
+                        className="mt-1"
+                        checked={commentReplyStyle === "TEXT_FIRST"}
+                        onChange={() => setCommentReplyStyle("TEXT_FIRST")}
+                      />
+                      <span>
+                        {t("Send a text first, then the cards when they reply")}
+                        <span className="block text-xs text-muted">
+                          {t("Plain text reaches everyone, followers or not. The cards go out as soon as they write anything back (within 24 hours).")}
+                        </span>
+                      </span>
+                    </label>
+                    {commentReplyStyle === "TEXT_FIRST" && (
+                      <textarea
+                        value={textOpener}
+                        onChange={(e) => setTextOpener(e.target.value)}
+                        maxLength={1000}
+                        rows={2}
+                        placeholder={t("Hi {username}! Reply with any message and I'll send it to you right away 👇", { username: "{username}" })}
+                        className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-foreground placeholder:text-zinc-500 focus:border-accent/40 focus:outline-none"
+                      />
+                    )}
+                  </div>
                   <p className="text-xs text-muted">
                     {t("A reply to a comment carries the cards alone. The module's intro is added when the cards follow a button tap or a DM.")}{" "}
                     <Link href="/modules" className="text-accent hover:underline">
@@ -1140,6 +1251,7 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
                 introText={modulePreview.introText}
                 cards={modulePreview.cards}
                 showIntro={openingDmEnabled || requireFollow || dmTriggerEnabled}
+                quickReplies={modulePreview.quickReplies}
               />
             </div>
           )}

@@ -7,7 +7,7 @@ export interface PreviewCard {
   title: string;
   subtitle: string;
   imageLinkUrl: string;
-  buttons: { label: string; url: string }[];
+  buttons: { label: string; url: string; kind: "url" | "module"; moduleId: string }[];
 }
 
 /**
@@ -18,10 +18,12 @@ export default function ModulePreview({
   introText,
   cards,
   showIntro = true,
+  quickReplies = [],
 }: {
   introText: string;
   cards: PreviewCard[];
   showIntro?: boolean;
+  quickReplies?: string[];
 }) {
   const { t } = useI18n();
   const visible = cards.filter(
@@ -83,6 +85,16 @@ export default function ModulePreview({
                   </div>
                 ))}
             </div>
+          ))}
+        </div>
+      )}
+
+      {quickReplies.length > 0 && (
+        <div className="mt-2 flex flex-wrap justify-end gap-1.5">
+          {quickReplies.map((title, index) => (
+            <span key={index} className="rounded-full border border-zinc-600 px-3 py-1 text-xs">
+              {title}
+            </span>
           ))}
         </div>
       )}

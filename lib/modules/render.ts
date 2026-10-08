@@ -3,7 +3,9 @@ import {
   CARD_SUBTITLE_MAX,
   CARD_TITLE_MAX,
   MAX_CARDS,
+  moduleActionPayload,
   type ModuleCard,
+  type ModuleQuickReply,
   type ModuleSlot,
 } from "./schema";
 
@@ -14,12 +16,22 @@ export interface SentModuleLink {
   slot: string;
 }
 
+export type CardButton =
+  | { type: "web_url"; url: string; title: string }
+  | { type: "postback"; payload: string; title: string };
+
 export interface CardElement {
   title: string;
   subtitle?: string;
   image_url?: string;
   default_action?: { type: "web_url"; url: string };
-  buttons?: { type: "web_url"; url: string; title: string }[];
+  buttons?: CardButton[];
+}
+
+export interface QuickReplyOption {
+  content_type: "text";
+  title: string;
+  payload: string;
 }
 
 export interface RenderContext {
@@ -79,17 +91,18 @@ export function buildCardElements(
       };
     }
     if (card.buttons.length > 0) {
-      element.buttons = card.buttons.slice(0, 3).map((button, buttonIndex) => ({
-        type: "web_url",
-        title: button.label.slice(0, 20),
-        url: slotUrl(
-          links,
-          number,
-          `btn${buttonIndex + 1}` as ModuleSlot,
-          button.url,
-          context
-        ),
-      }));
+      element.buttons = card.buttons.slice(0, 3).map((button, buttonIndex): CardButton => {
+        const title = button.label.slice(0, 20);
+        // A module button answers with another module when tapped.
+        if (button.moduleId) {
+          return { type: "postback", title, payload: moduleActionPayload(button.moduleId, context.automationId) };
+        }
+        return {
+          type: "web_url",
+          title,
+          url: slotUrl(links, number, `btn${buttonIndex + 1}` as ModuleSlot, button.url ?? "", context),
+        };
+      });
     }
     return element;
   });
@@ -106,7 +119,10 @@ export function buildFirstCardButtons(
 ): { text: string; buttons: { title: string; url: string }[] } | null {
   const [element] = buildCardElements(cards.slice(0, 1), links, context);
   if (!element) return null;
-  const buttons = (element.buttons ?? []).map((b) => ({ title: b.title, url: b.url }));
+  // The fallback is a link-button message, so only link buttons carry over.
+  const buttons = (element.buttons ?? []).flatMap((b) =>
+    b.type === "web_url" ? [{ title: b.title, url: b.url }] : []
+  );
   if (buttons.length === 0 && element.default_action) {
     buttons.push({ title: "Open", url: element.default_action.url });
   }
@@ -129,8 +145,21 @@ export function buildCardsPlainText(
   const lines: string[] = [];
   if (intro) lines.push(personalize(intro, context));
   for (const element of elements) {
-    const url = element.buttons?.[0]?.url ?? element.default_action?.url;
+    const firstLink = element.buttons?.find((b) => b.type === "web_url");
+    const url = (firstLink?.type === "web_url" ? firstLink.url : undefined) ?? element.default_action?.url;
     lines.push(url ? `${element.title}\n${url}` : element.title);
   }
   return lines.join("\n\n").slice(0, 1000);
+}
+
+/** The module's quick replies as Instagram quick_replies options. */
+export function buildQuickReplies(
+  replies: ModuleQuickReply[],
+  context: RenderContext
+): QuickReplyOption[] {
+  return replies.slice(0, 13).map((reply) => ({
+    content_type: "text",
+    title: reply.title.slice(0, 20),
+    payload: moduleActionPayload(reply.moduleId, context.automationId),
+  }));
 }

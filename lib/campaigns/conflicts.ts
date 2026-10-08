@@ -6,6 +6,7 @@ export interface ConflictCandidate {
   instagramAccountId: string;
   isActive: boolean;
   dmOnly: boolean;
+  dmRuleType: string;
   postId: string | null;
   matchAnyPost: boolean;
   matchAnyWord: boolean;
@@ -16,8 +17,11 @@ export interface ConflictCandidate {
 export interface CampaignConflict {
   otherId: string;
   otherName: string;
-  /** "comment": both answer the same comments; "dm": both answer the same DMs. */
-  kind: "comment" | "dm";
+  /**
+   * "comment": both answer the same comments; "dm": both answer the same DMs;
+   * "story": two rules answer story mentions (only the oldest is used).
+   */
+  kind: "comment" | "dm" | "story";
 }
 
 function normalize(keyword: string): string {
@@ -41,8 +45,10 @@ function answersComments(c: ConflictCandidate) {
 }
 
 function answersDms(c: ConflictCandidate) {
-  return c.dmOnly || c.dmTriggerEnabled;
+  return c.dmOnly ? c.dmRuleType === "KEYWORD" : c.dmTriggerEnabled;
 }
+
+const isStoryRule = (c: ConflictCandidate) => c.dmOnly && c.dmRuleType === "STORY_MENTION";
 
 function postsOverlap(a: ConflictCandidate, b: ConflictCandidate) {
   return a.matchAnyPost || b.matchAnyPost || (Boolean(a.postId) && a.postId === b.postId);
@@ -63,6 +69,10 @@ export function findConflicts(
   for (const other of others) {
     if (other.id === target.id || !other.isActive) continue;
     if (other.instagramAccountId !== target.instagramAccountId) continue;
+    if (isStoryRule(target) && isStoryRule(other)) {
+      conflicts.push({ otherId: other.id, otherName: other.name, kind: "story" });
+      continue;
+    }
     if (!keywordsOverlap(target, other)) continue;
     if (answersComments(target) && answersComments(other) && postsOverlap(target, other)) {
       conflicts.push({ otherId: other.id, otherName: other.name, kind: "comment" });
@@ -80,6 +90,7 @@ export const CONFLICT_CANDIDATE_SELECT = {
   instagramAccountId: true,
   isActive: true,
   dmOnly: true,
+  dmRuleType: true,
   postId: true,
   matchAnyPost: true,
   matchAnyWord: true,

@@ -440,7 +440,10 @@ export interface GenericTemplateElement {
   subtitle?: string;
   image_url?: string;
   default_action?: { type: "web_url"; url: string };
-  buttons?: { type: "web_url"; url: string; title: string }[];
+  buttons?: (
+    | { type: "web_url"; url: string; title: string }
+    | { type: "postback"; payload: string; title: string }
+  )[];
 }
 
 async function sendGenericTemplate(
@@ -469,6 +472,28 @@ async function sendGenericTemplate(
     }
   );
 
+  return handleResponse(response);
+}
+
+/** A text message with quick-reply chips (up to 13) in an open conversation. */
+export async function sendDirectMessageWithQuickReplies(
+  accessToken: string,
+  instagramAccountId: string,
+  userId: string,
+  text: string,
+  quickReplies: { content_type: "text"; title: string; payload: string }[]
+): Promise<{ recipient_id: string; message_id: string }> {
+  const response = await fetch(
+    `${instagramGraphBase()}/${messagingNode(instagramAccountId)}/messages`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
+      body: JSON.stringify({
+        recipient: { id: userId },
+        message: { text: text.slice(0, 1000), quick_replies: quickReplies.slice(0, 13) },
+      }),
+    }
+  );
   return handleResponse(response);
 }
 
@@ -958,6 +983,78 @@ export async function getDataAccessExpiry(token: string): Promise<Date | null> {
   } catch {
     return null;
   }
+}
+
+/**
+ * Instagram ice breakers: up to four questions offered when someone opens a
+ * new conversation. A tap arrives as a postback carrying the payload.
+ */
+export async function setInstagramIceBreakers(
+  accessToken: string,
+  items: { question: string; payload: string }[]
+): Promise<{ result?: string }> {
+  const url = new URL(`${instagramGraphBase()}/me/messenger_profile`);
+  url.searchParams.set("platform", "instagram");
+  const response = await fetch(url.toString(), {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
+    body: JSON.stringify({
+      platform: "instagram",
+      ice_breakers: [
+        {
+          call_to_actions: items.slice(0, 4).map((item) => ({
+            question: item.question.slice(0, 80),
+            payload: item.payload,
+          })),
+          locale: "default",
+        },
+      ],
+    }),
+  });
+  return handleResponse(response);
+}
+
+export async function deleteInstagramIceBreakers(accessToken: string): Promise<{ result?: string }> {
+  const url = new URL(`${instagramGraphBase()}/me/messenger_profile`);
+  url.searchParams.set("platform", "instagram");
+  const response = await fetch(url.toString(), {
+    method: "DELETE",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
+    body: JSON.stringify({ fields: ["ice_breakers"], platform: "instagram" }),
+  });
+  return handleResponse(response);
+}
+
+/**
+ * The persistent menu in the Instagram DM composer (app v226+). Items open a
+ * link or send a postback; a tap gives a 24-hour window to answer.
+ */
+export async function setInstagramPersistentMenu(
+  accessToken: string,
+  items: ({ type: "web_url"; title: string; url: string } | { type: "postback"; title: string; payload: string })[]
+): Promise<{ result?: string }> {
+  const url = new URL(`${instagramGraphBase()}/me/messenger_profile`);
+  url.searchParams.set("platform", "instagram");
+  const response = await fetch(url.toString(), {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
+    body: JSON.stringify({
+      platform: "instagram",
+      persistent_menu: [{ locale: "default", call_to_actions: items.slice(0, 5) }],
+    }),
+  });
+  return handleResponse(response);
+}
+
+export async function deleteInstagramPersistentMenu(accessToken: string): Promise<{ result?: string }> {
+  const url = new URL(`${instagramGraphBase()}/me/messenger_profile`);
+  url.searchParams.set("platform", "instagram");
+  const response = await fetch(url.toString(), {
+    method: "DELETE",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${accessToken}` },
+    body: JSON.stringify({ fields: ["persistent_menu"], platform: "instagram" }),
+  });
+  return handleResponse(response);
 }
 
 export async function debugToken(inputToken: string, accessToken: string) {

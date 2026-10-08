@@ -7,6 +7,7 @@ import {
   sendDirectMessage,
   sendDirectMessageWithCards,
   sendDirectMessageWithLinkButton,
+  sendDirectMessageWithQuickReplies,
   sendPrivateReply,
   sendPrivateReplyWithCards,
   sendPrivateReplyWithLinkButton,
@@ -18,18 +19,23 @@ import {
   buildCardElements,
   buildCardsPlainText,
   buildFirstCardButtons,
+  buildQuickReplies,
   type RenderContext,
   type SentModuleLink,
 } from "./render";
-import { parseStoredCards } from "./schema";
+import { parseStoredCards, parseStoredQuickReplies } from "./schema";
 
 /** What the worker loads with a campaign to send its module. */
 export interface SendableModule {
   id: string;
   introText: string | null;
   cards: unknown;
+  quickReplies?: unknown;
+  quickReplyPrompt?: string | null;
   links: SentModuleLink[];
 }
+
+const DEFAULT_QUICK_REPLY_PROMPT = "👇";
 
 export type ModuleDelivery = "cards" | "button" | "text";
 
@@ -144,6 +150,56 @@ export async function sendModuleAsPrivateReply({
  * the intro text first, then the cards, with the same fallbacks.
  */
 export async function sendModuleAsDirectMessage({
+  context,
+  instagramAccountId,
+  userId,
+  module,
+  automationId,
+  commenterName,
+  fallbackText,
+}: {
+  context: InstagramContext;
+  instagramAccountId: string;
+  userId: string;
+  module: SendableModule;
+  automationId: string;
+  commenterName?: string | null;
+  fallbackText: string;
+}): Promise<ModuleDelivery> {
+  const delivery = await sendModuleBody({
+    context,
+    instagramAccountId,
+    userId,
+    module,
+    automationId,
+    commenterName,
+    fallbackText,
+  });
+
+  // Quick replies ride on a short message of their own after the cards, so
+  // they work whichever format the cards went out in.
+  const replies = parseStoredQuickReplies(module.quickReplies);
+  if (replies.length > 0) {
+    try {
+      await sendDirectMessageWithQuickReplies({
+        context,
+        instagramAccountId,
+        userId,
+        text: renderMessageWithoutLink({
+          message: module.quickReplyPrompt || DEFAULT_QUICK_REPLY_PROMPT,
+          commenterName,
+        }),
+        quickReplies: buildQuickReplies(replies, renderContext(automationId, userId, commenterName)),
+      });
+    } catch (error) {
+      // The cards already went out; missing chips must not fail the reply.
+      console.warn("[Modules] Quick replies not sent:", String(error));
+    }
+  }
+  return delivery;
+}
+
+async function sendModuleBody({
   context,
   instagramAccountId,
   userId,

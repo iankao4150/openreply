@@ -82,7 +82,8 @@ interface WebhookEntry {
       is_echo?: boolean;
       is_deleted?: boolean;
       is_unsupported?: boolean;
-      attachments?: Array<{ type?: string }>;
+      quick_reply?: { payload?: string };
+      attachments?: Array<{ type?: string; payload?: { url?: string } }>;
     };
   }>;
 }
@@ -219,6 +220,10 @@ export function parseMessageEvents(
         continue;
       }
 
+      // A tap on one of our quick replies is routed as a DM action, not
+      // matched against keywords — its text would otherwise trigger rules too.
+      if (isDmActionPayload(message.quick_reply?.payload)) continue;
+
       const text = message.text?.trim();
       const messageId = message.mid;
       const senderId = messaging.sender?.id;
@@ -268,5 +273,85 @@ export function parseReadEvents(payload: WebhookPayload): WebhookReadEvent[] {
     }
   }
 
+  return events;
+}
+
+/**
+ * Payloads this app puts on buttons, quick replies and ice breakers that
+ * answer with a message module (`mod:<moduleId>:<automationId>`) or a DM rule
+ * (`rule:<automationId>`).
+ */
+export function isDmActionPayload(payload: string | undefined | null): payload is string {
+  return Boolean(payload && (payload.startsWith("mod:") || payload.startsWith("rule:")));
+}
+
+export interface WebhookDmActionEvent {
+  instagramAccountId: string;
+  userId: string;
+  payload: string;
+  mid: string;
+}
+
+/** Quick-reply taps carrying one of our DM action payloads. */
+export function parseQuickReplyEvents(payload: WebhookPayload): WebhookDmActionEvent[] {
+  const events: WebhookDmActionEvent[] = [];
+  if (payload.object !== "instagram") return events;
+  for (const entry of payload.entry ?? []) {
+    for (const messaging of entry.messaging ?? []) {
+      const message = messaging.message;
+      const tapPayload = message?.quick_reply?.payload;
+      if (!message || message.is_echo || !isDmActionPayload(tapPayload)) continue;
+      const userId = messaging.sender?.id;
+      const accountId = entry.id ?? messaging.recipient?.id;
+      if (!userId || !accountId || !message.mid || userId === accountId) continue;
+      events.push({ instagramAccountId: accountId, userId, payload: tapPayload, mid: message.mid });
+    }
+  }
+  return events;
+}
+
+export interface WebhookStoryMentionEvent {
+  instagramAccountId: string;
+  userId: string;
+  mid: string;
+}
+
+/** Someone mentioned the account in their story (a message with a story_mention attachment). */
+export function parseStoryMentionEvents(payload: WebhookPayload): WebhookStoryMentionEvent[] {
+  const events: WebhookStoryMentionEvent[] = [];
+  if (payload.object !== "instagram") return events;
+  for (const entry of payload.entry ?? []) {
+    for (const messaging of entry.messaging ?? []) {
+      const message = messaging.message;
+      if (!message || message.is_echo || message.is_deleted) continue;
+      if (!message.attachments?.some((attachment) => attachment.type === "story_mention")) continue;
+      const userId = messaging.sender?.id;
+      const accountId = entry.id ?? messaging.recipient?.id;
+      if (!userId || !accountId || !message.mid || userId === accountId) continue;
+      events.push({ instagramAccountId: accountId, userId, mid: message.mid });
+    }
+  }
+  return events;
+}
+
+export interface WebhookEchoEvent {
+  instagramAccountId: string;
+  /** The person the account's message went to. */
+  userId: string;
+}
+
+/** Messages the account itself sent: our own automated ones, or a person's. */
+export function parseEchoEvents(payload: WebhookPayload): WebhookEchoEvent[] {
+  const events: WebhookEchoEvent[] = [];
+  if (payload.object !== "instagram") return events;
+  for (const entry of payload.entry ?? []) {
+    for (const messaging of entry.messaging ?? []) {
+      if (!messaging.message?.is_echo) continue;
+      const accountId = entry.id ?? messaging.sender?.id;
+      const userId = messaging.recipient?.id;
+      if (!accountId || !userId || userId === accountId) continue;
+      events.push({ instagramAccountId: accountId, userId });
+    }
+  }
   return events;
 }

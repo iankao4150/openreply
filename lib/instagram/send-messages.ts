@@ -311,3 +311,26 @@ export async function sendDirectMessageWithCards({
   if (context.provider !== "META") throw new CardsUnsupportedError();
   return meta.sendDirectMessageWithCards(context.accessToken, instagramAccountId, userId, elements);
 }
+
+export async function sendDirectMessageWithQuickReplies({
+  context,
+  instagramAccountId,
+  userId,
+  text,
+  quickReplies,
+}: {
+  context: InstagramContext;
+  instagramAccountId: string;
+  userId: string;
+  text: string;
+  quickReplies: { content_type: "text"; title: string; payload: string }[];
+}) {
+  if (context.provider !== "META") throw new CardsUnsupportedError();
+  return meta.sendDirectMessageWithQuickReplies(
+    context.accessToken,
+    instagramAccountId,
+    userId,
+    text,
+    quickReplies
+  );
+}

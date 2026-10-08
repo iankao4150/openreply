@@ -77,15 +77,32 @@ export interface ProcessMessageJob {
   senderId: string;
 }
 
+/**
+ * A DM-side action that answers with a DM rule or a message module:
+ * - "tap": a button, quick-reply or ice-breaker tap whose payload is
+ *   `mod:<moduleId>:<automationId>` or `rule:<automationId>`;
+ * - "story": someone mentioned the account in their story.
+ */
+export interface ProcessDmActionJob {
+  accountConnectionId?: string;
+  instagramAccountId: string;
+  userId: string;
+  kind: "tap" | "story";
+  payload?: string;
+  mid: string;
+}
+
 export type DmQueueJob =
   | ProcessCommentJob
   | ProcessPostbackJob
   | ProcessFollowUpJob
-  | ProcessMessageJob;
+  | ProcessMessageJob
+  | ProcessDmActionJob;
 
 export const POSTBACK_JOB_NAME = "process-postback";
 export const FOLLOWUP_JOB_NAME = "process-followup";
 export const MESSAGE_JOB_NAME = "process-message";
+export const DM_ACTION_JOB_NAME = "process-dm-action";
 
 let dmQueue: Queue<DmQueueJob> | null = null;
 

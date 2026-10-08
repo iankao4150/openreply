@@ -142,6 +142,11 @@ model InstagramAccount {
   // data_access_expires_at, ~90 days after the last sign-in). The token itself
   // never expires, so the refresh cron cannot extend this — only reconnecting.
   accessExpiresAt   DateTime?
+  // Minutes automated DM replies stay quiet in a conversation after someone
+  // replies by hand (in the Instagram app or the inbox). 0 turns it off.
+  humanPauseMinutes Int      @default(30)
+  // Persistent menu in the DM composer: [{title, url?, moduleId?}], max 5.
+  persistentMenu    Json     @default("[]")
   webhookSubscribed Boolean  @default(false)
   connectedAt       DateTime @default(now())
   updatedAt         DateTime @updatedAt
@@ -208,8 +213,28 @@ model Automation {
   // Reply with a reusable message module (carousel cards) instead of dmMessage.
   // dmMessage is kept as the plain-text fallback if Meta refuses the cards.
   messageModuleId String?
-  // A DM keyword rule: triggered only by DMs, never bound to a post.
+  // A DM rule: triggered only by DMs, never bound to a post.
   dmOnly Boolean @default(false)
+  // What triggers a DM rule: KEYWORD (a DM containing a keyword),
+  // STORY_MENTION (someone mentions the account in their story) or
+  // ICE_BREAKER (a tap on one of the conversation-starter questions).
+  dmRuleType String @default("KEYWORD")
+  // The question shown for an ICE_BREAKER rule (max 4 per account).
+  iceBreakerQuestion String?
+  // Optional schedule. Outside [startsAt, endsAt) nothing new is answered;
+  // button taps on replies already sent still work.
+  startsAt DateTime?
+  endsAt   DateTime?
+  // Answer each person once per campaign; later comments or DMs are skipped.
+  oncePerUser Boolean @default(false)
+  // DM-triggered replies: minutes before the same person can trigger it again.
+  cooldownMinutes Int @default(0)
+  // How a module answers a comment: CARDS sends the carousel as the private
+  // reply; TEXT_FIRST sends textOpener as plain text and the cards once the
+  // person replies (plain text reaches people who do not follow the account,
+  // where Instagram may refuse templates).
+  commentReplyStyle String @default("CARDS")
+  textOpener        String?
   publicReplyEnabled Boolean @default(false)
   publicReplyMessage String?
   publicReplyMessages String[] @default([])
@@ -447,6 +472,11 @@ model MessageModule {
   introText   String?
   // ModuleCard[] — see lib/modules/schema.ts.
   cards       Json
+  // QuickReply[] (title + moduleId): chips under the reply that send another
+  // module when tapped. Only offered where a conversation is open.
+  quickReplies Json    @default("[]")
+  // The short message the quick replies are attached to, sent after the cards.
+  quickReplyPrompt String?
   utmSource   String   @default("openreply")
   utmMedium   String   @default("dm")
   utmCampaign String?
@@ -500,4 +530,16 @@ model ModuleLinkClick {
   @@index([workspaceId, createdAt])
   @@index([moduleLinkId])
   @@index([automationId])
+}
+
+// People who asked to stop automated DMs (by sending STOP or similar). They get
+// no automated message from the account until they send START.
+model DmOptOut {
+  id                 String   @id @default(cuid())
+  instagramAccountId String
+  userId             String
+  createdAt          DateTime @default(now())
+
+  @@unique([instagramAccountId, userId])
+  @@index([instagramAccountId])
 }

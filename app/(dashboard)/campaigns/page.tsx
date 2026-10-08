@@ -12,6 +12,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import AccountSelect, { type AccountOption } from "@/components/account-select";
 import { readCache, writeCache } from "@/lib/client-cache";
+import { scheduleState } from "@/lib/campaigns/schedule";
 
 interface Campaign {
   id: string;
@@ -36,6 +37,9 @@ interface Campaign {
   isActive: boolean;
   wholeWordMatch: boolean;
   dmOnly: boolean;
+  startsAt: string | null;
+  endsAt: string | null;
+  oncePerUser: boolean;
   messageModule: { id: string; name: string } | null;
   conflicts?: { otherId: string; otherName: string; kind: "comment" | "dm" }[];
   instagramAccountId: string;
@@ -67,7 +71,9 @@ interface Campaign {
 }
 
 export default function CampaignsPage() {
-  const { t, label } = useI18n();
+  const { t, label, locale } = useI18n();
+  // Captured once per visit for the schedule badges.
+  const [now] = useState(() => Date.now());
   const router = useRouter();
   const [automations, setAutomations] = useState<Campaign[]>([]);
   const [accounts, setAccounts] = useState<AccountOption[]>([]);
@@ -439,6 +445,26 @@ export default function CampaignsPage() {
                   {auto.pendingNextReel && (
                     <span className="shrink-0 rounded-full bg-amber-500/10 px-2 py-0.5 text-xs font-medium text-warning">
                       {t("Waiting for next reel")}
+                    </span>
+                  )}
+                  {scheduleState(auto.startsAt, auto.endsAt, now) === "scheduled" && (
+                    <span className="shrink-0 rounded-full bg-accent/10 px-2 py-0.5 text-xs font-medium text-accent">
+                      {t("Starts {date}", { date: new Date(auto.startsAt as string).toLocaleString(locale) })}
+                    </span>
+                  )}
+                  {scheduleState(auto.startsAt, auto.endsAt, now) === "live" && auto.endsAt && (
+                    <span className="shrink-0 rounded-full bg-accent/10 px-2 py-0.5 text-xs font-medium text-accent">
+                      {t("Ends {date}", { date: new Date(auto.endsAt).toLocaleString(locale) })}
+                    </span>
+                  )}
+                  {scheduleState(auto.startsAt, auto.endsAt, now) === "ended" && (
+                    <span className="shrink-0 rounded-full bg-zinc-500/10 px-2 py-0.5 text-xs font-medium text-muted">
+                      {t("Ended")}
+                    </span>
+                  )}
+                  {auto.oncePerUser && (
+                    <span className="shrink-0 rounded-full bg-accent/10 px-2 py-0.5 text-xs font-medium text-accent">
+                      {t("Once per person")}
                     </span>
                   )}
                   {auto.requireFollow && (

@@ -21,6 +21,13 @@ import {
   type ConflictCandidate,
 } from "@/lib/campaigns/conflicts";
 import { parseStoredCards } from "@/lib/modules/schema";
+import { MAX_ICE_BREAKERS, syncIceBreakers } from "@/lib/campaigns/ice-breakers";
+
+const DM_RULE_TYPES = ["KEYWORD", "STORY_MENTION", "ICE_BREAKER"] as const;
+const optionalDate = z
+  .union([z.string().datetime({ offset: true }), z.literal(""), z.null()])
+  .optional()
+  .transform((value) => (value ? new Date(value) : value === undefined ? undefined : null));
 import {
   canManageWorkspace,
   getCurrentWorkspaceContext,
@@ -46,8 +53,16 @@ const createAutomationSchema = z
     // plain-text fallback and defaults to the module's first card.
     dmMessage: z.string().max(1000).optional().default(""),
     messageModuleId: z.string().min(1).optional().nullable(),
-    // A DM keyword rule: answers DMs only, never a post's comments.
+    // A DM rule: answers DMs only, never a post's comments.
     dmOnly: z.boolean().optional().default(false),
+    dmRuleType: z.enum(DM_RULE_TYPES).optional().default("KEYWORD"),
+    iceBreakerQuestion: z.string().trim().max(80).optional().nullable(),
+    startsAt: optionalDate,
+    endsAt: optionalDate,
+    oncePerUser: z.boolean().optional().default(false),
+    cooldownMinutes: z.number().int().min(0).max(10080).optional().default(0),
+    commentReplyStyle: z.enum(["CARDS", "TEXT_FIRST"]).optional().default("CARDS"),
+    textOpener: z.string().trim().max(1000).optional().nullable(),
     openingDmEnabled: z.boolean().optional().default(false),
     openingDmMessage: z.string().max(1000).optional().nullable(),
     openingDmButtonLabel: z.string().max(64).optional().nullable(),
@@ -95,10 +110,20 @@ const createAutomationSchema = z
     message: "Add the DM text or choose a message module",
     path: ["dmMessage"],
   })
-  // And it must match either specific words or any word.
-  .refine((d) => d.matchAnyWord || d.keywords.length >= 1, {
-    message: "Add at least one keyword, or match any word",
-    path: ["keywords"],
+  // And it must match either specific words or any word — except DM rules
+  // triggered by a story mention or an ice-breaker tap, which have no words.
+  .refine(
+    (d) =>
+      (d.dmOnly && d.dmRuleType !== "KEYWORD") || d.matchAnyWord || d.keywords.length >= 1,
+    { message: "Add at least one keyword, or match any word", path: ["keywords"] }
+  )
+  .refine((d) => !(d.dmOnly && d.dmRuleType === "ICE_BREAKER") || Boolean(d.iceBreakerQuestion?.trim()), {
+    message: "An ice breaker needs its question",
+    path: ["iceBreakerQuestion"],
+  })
+  .refine((d) => !d.startsAt || !d.endsAt || d.endsAt > d.startsAt, {
+    message: "The end must be after the start",
+    path: ["endsAt"],
   })
   // An opening DM needs both a message and a button label.
   .refine(
@@ -121,6 +146,13 @@ const updateAutomationSchema = z.object({
   dmTriggerEnabled: z.boolean().optional(),
   dmMessage: z.string().max(1000).optional(),
   messageModuleId: z.string().min(1).optional().nullable(),
+  iceBreakerQuestion: z.string().trim().max(80).optional().nullable(),
+  startsAt: optionalDate,
+  endsAt: optionalDate,
+  oncePerUser: z.boolean().optional(),
+  cooldownMinutes: z.number().int().min(0).max(10080).optional(),
+  commentReplyStyle: z.enum(["CARDS", "TEXT_FIRST"]).optional(),
+  textOpener: z.string().trim().max(1000).optional().nullable(),
   openingDmEnabled: z.boolean().optional(),
   openingDmMessage: z.string().max(1000).optional().nullable(),
   openingDmButtonLabel: z.string().max(64).optional().nullable(),
@@ -414,6 +446,19 @@ export async function POST(request: NextRequest) {
     );
   }
   const dmOnly = parsed.data.dmOnly;
+  const dmRuleType = dmOnly ? parsed.data.dmRuleType : "KEYWORD";
+  const isIceBreaker = dmOnly && dmRuleType === "ICE_BREAKER";
+  if (isIceBreaker && parsed.data.isActive) {
+    const active = await prisma.automation.count({
+      where: { instagramAccountId: instagramAccount.id, dmOnly: true, dmRuleType: "ICE_BREAKER", isActive: true },
+    });
+    if (active >= MAX_ICE_BREAKERS) {
+      return NextResponse.json(
+        { success: false, error: "Instagram shows at most 4 ice breakers. Pause one first." },
+        { status: 400 }
+      );
+    }
+  }
   const dmMessage =
     parsed.data.dmMessage.trim() || (messageModule ? moduleFallbackText(messageModule) : "");
 
@@ -450,12 +495,22 @@ export async function POST(request: NextRequest) {
       postUrl: isSpecificPost ? parsed.data.postUrl : null,
       pendingNextReel,
       matchAnyPost,
-      keywords: matchAnyWord ? [] : parsed.data.keywords,
+      keywords: matchAnyWord || (dmOnly && dmRuleType !== "KEYWORD") ? [] : parsed.data.keywords,
       matchAnyWord,
       dmTriggerEnabled: dmOnly || parsed.data.dmTriggerEnabled,
       dmMessage,
       messageModuleId: messageModule?.id ?? null,
       dmOnly,
+      dmRuleType,
+      iceBreakerQuestion: isIceBreaker ? parsed.data.iceBreakerQuestion?.trim() || null : null,
+      // Ice breakers are a standing menu; a schedule would leave Instagram
+      // showing questions that no longer answer.
+      startsAt: isIceBreaker ? null : parsed.data.startsAt ?? null,
+      endsAt: isIceBreaker ? null : parsed.data.endsAt ?? null,
+      oncePerUser: parsed.data.oncePerUser,
+      cooldownMinutes: parsed.data.cooldownMinutes,
+      commentReplyStyle: parsed.data.commentReplyStyle,
+      textOpener: parsed.data.textOpener || null,
       openingDmEnabled,
       openingDmMessage: openingDmEnabled
         ? parsed.data.openingDmMessage || null
@@ -500,9 +555,10 @@ export async function POST(request: NextRequest) {
   });
 
   const warnings = await conflictsFor(workspaceId, automation);
+  const iceBreakerError = isIceBreaker ? await syncIceBreakers(instagramAccount.id) : null;
 
   return NextResponse.json(
-    { success: true, data: automation, warnings },
+    { success: true, data: automation, warnings, iceBreakerError },
     { status: 201 }
   );
 }
@@ -588,7 +644,49 @@ export async function PATCH(request: NextRequest) {
     }
     automationData.dmMessage = moduleFallbackText(messageModule);
   }
-  // A DM keyword rule keeps no post and none of the comment-only options.
+  // Schedule: the end must follow the start, whichever side changed.
+  const nextStart = automationData.startsAt === undefined ? existing.startsAt : automationData.startsAt;
+  const nextEnd = automationData.endsAt === undefined ? existing.endsAt : automationData.endsAt;
+  if (nextStart && nextEnd && nextEnd <= nextStart) {
+    return NextResponse.json(
+      { success: false, error: "The end must be after the start" },
+      { status: 400 }
+    );
+  }
+  const isIceBreaker = existing.dmOnly && existing.dmRuleType === "ICE_BREAKER";
+  if (isIceBreaker) {
+    automationData.startsAt = null;
+    automationData.endsAt = null;
+    if (automationData.iceBreakerQuestion !== undefined && !automationData.iceBreakerQuestion?.trim()) {
+      return NextResponse.json(
+        { success: false, error: "An ice breaker needs its question" },
+        { status: 400 }
+      );
+    }
+    if (automationData.isActive === true && !existing.isActive) {
+      const active = await prisma.automation.count({
+        where: {
+          instagramAccountId: existing.instagramAccountId,
+          dmOnly: true,
+          dmRuleType: "ICE_BREAKER",
+          isActive: true,
+        },
+      });
+      if (active >= MAX_ICE_BREAKERS) {
+        return NextResponse.json(
+          { success: false, error: "Instagram shows at most 4 ice breakers. Pause one first." },
+          { status: 400 }
+        );
+      }
+    }
+  } else {
+    automationData.iceBreakerQuestion = undefined;
+  }
+  if (existing.dmOnly && existing.dmRuleType !== "KEYWORD") {
+    automationData.keywords = [];
+    automationData.matchAnyWord = false;
+  }
+  // A DM rule keeps no post and none of the comment-only options.
   if (existing.dmOnly) {
     automationData.postId = null;
     automationData.postUrl = null;
@@ -597,7 +695,7 @@ export async function PATCH(request: NextRequest) {
     automationData.publicReplyEnabled = false;
     automationData.openingDmEnabled = false;
     automationData.dmTriggerEnabled = true;
-    if (automationData.matchAnyWord === true) {
+    if (automationData.matchAnyWord === true && existing.dmRuleType === "KEYWORD") {
       return NextResponse.json(
         { success: false, error: "A DM keyword rule needs at least one keyword" },
         { status: 400 }
@@ -659,8 +757,9 @@ export async function PATCH(request: NextRequest) {
   });
 
   const warnings = await conflictsFor(workspaceId, updated);
+  const iceBreakerError = isIceBreaker ? await syncIceBreakers(existing.instagramAccountId) : null;
 
-  return NextResponse.json({ success: true, data: updated, warnings });
+  return NextResponse.json({ success: true, data: updated, warnings, iceBreakerError });
 }
 
 export async function DELETE(request: NextRequest) {
@@ -701,6 +800,9 @@ export async function DELETE(request: NextRequest) {
   }
 
   await prisma.automation.delete({ where: { id: automationId } });
+  if (existing.dmOnly && existing.dmRuleType === "ICE_BREAKER") {
+    await syncIceBreakers(existing.instagramAccountId);
+  }
 
   return NextResponse.json({ success: true, data: { deleted: true } });
 }

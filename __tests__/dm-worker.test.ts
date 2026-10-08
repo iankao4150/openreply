@@ -34,6 +34,14 @@ const {
     },
     instagramAccount: {
       findUnique: vi.fn(),
+      // The DM-trigger path looks the account up first (opt-out, text-first).
+      findFirst: vi.fn(async () => ({
+        id: "ig_account_row_1",
+        instagramId: "ig_456",
+        accessToken: "encrypted_token_abc",
+        provider: "META",
+        workspaceId: "workspace_123",
+      })),
     },
     operationalEvent: {
       create: vi.fn(),
@@ -55,6 +63,24 @@ const {
   mockReleaseWorkspaceDMReservation: vi.fn(),
 }));
 
+// The human-pause marks have their own tests; here they must not share the
+// mocked Redis that the tap dedupe scripts.
+vi.mock("@/lib/ops/opt-out", () => ({
+  isOptedOut: vi.fn().mockResolvedValue(false),
+  setOptOut: vi.fn(),
+  optOutCommand: vi.fn().mockReturnValue(null),
+  OPT_OUT_CONFIRMATION: "stopped",
+  OPT_IN_CONFIRMATION: "started",
+}));
+vi.mock("@/lib/ops/pending-reply", () => ({
+  setPendingModule: vi.fn(),
+  takePendingModule: vi.fn().mockResolvedValue(null),
+}));
+vi.mock("@/lib/ops/human-pause", () => ({
+  markAutomatedSend: vi.fn().mockResolvedValue(undefined),
+  isHumanHandling: vi.fn().mockResolvedValue(false),
+  recordEcho: vi.fn().mockResolvedValue("ignored"),
+}));
 vi.mock("@/lib/db/client", () => ({
   prisma: mockPrisma,
 }));
@@ -119,6 +145,7 @@ vi.mock("@/lib/queue/client", () => ({
   POSTBACK_JOB_NAME: "process-postback",
   FOLLOWUP_JOB_NAME: "process-followup",
   MESSAGE_JOB_NAME: "process-message",
+  DM_ACTION_JOB_NAME: "process-dm-action",
 }));
 
 vi.mock("bullmq", () => {
@@ -330,6 +357,8 @@ describe("DM Worker — Full Pipeline", () => {
     expect(mockPrisma.automation.findMany).toHaveBeenCalledWith({
       where: {
         OR: [{ postId: "media_101" }, { matchAnyPost: true }],
+        // Only campaigns live now (start/end schedule).
+        AND: expect.any(Array),
         isActive: true,
         instagramAccount: { instagramId: "ig_456" },
       },
@@ -349,8 +378,11 @@ describe("DM Worker — Full Pipeline", () => {
         messageModule: {
           select: {
             id: true,
+            name: true,
             introText: true,
             cards: true,
+            quickReplies: true,
+            quickReplyPrompt: true,
             links: { select: { slug: true, card: true, slot: true } },
           },
         },
@@ -566,6 +598,28 @@ describe("DM Worker — Full Pipeline", () => {
       "comment_555",
       "Hey there! Here is the link: https://example.com"
     );
+  });
+
+  it("answers a comment with text first and promises the module cards for their reply", async () => {
+    const { setPendingModule } = await import("@/lib/ops/pending-reply");
+    mockPrisma.automation.findMany.mockResolvedValue([
+      {
+        ...mockAutomation,
+        commentReplyStyle: "TEXT_FIRST",
+        textOpener: "Hi {username}! Reply and I'll send the cards",
+        messageModule: { id: "modulehoodie123", name: "m", introText: null, cards: [], quickReplies: [], links: [] },
+      },
+    ]);
+    const processor = getProcessor();
+    await processor(createMockJob());
+
+    expect(mockSendPrivateReply).toHaveBeenCalledWith(
+      "decrypted_token",
+      "ig_456",
+      "comment_555",
+      "Hi commenter_user! Reply and I'll send the cards"
+    );
+    expect(setPendingModule).toHaveBeenCalledWith("ig_456", "commenter_999", "auto_789");
   });
 
   it("should deliver tracked links as web_url buttons (one or two)", async () => {

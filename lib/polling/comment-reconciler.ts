@@ -40,6 +40,7 @@ import {
   type InstagramContext,
 } from "@/lib/instagram/provider";
 import { matchKeywords } from "@/lib/utils/keyword-matcher";
+import { liveAt } from "@/lib/campaigns/schedule";
 
 // Only consider comments from the last few days — older ones are outside
 // Instagram's private-reply window anyway, so a DM to them would just fail.
@@ -69,7 +70,8 @@ function errMessage(error: unknown): string {
 /** One reconciliation pass across every active campaign. */
 export async function reconcileComments(): Promise<void> {
   const automations = await prisma.automation.findMany({
-    where: { isActive: true },
+    // DM rules have no post to sweep; scheduled campaigns only while live.
+    where: { isActive: true, dmOnly: false, AND: liveAt(new Date()) },
     select: {
       id: true,
       name: true,

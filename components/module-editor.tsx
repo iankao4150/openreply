@@ -11,6 +11,17 @@ const MAX_BUTTONS = 3;
 const TITLE_MAX = 80;
 const SUBTITLE_MAX = 80;
 const LABEL_MAX = 20;
+const MAX_QUICK_REPLIES = 13;
+
+type DraftButton = PreviewCard["buttons"][number];
+interface DraftQuickReply {
+  title: string;
+  moduleId: string;
+}
+interface ModuleOption {
+  id: string;
+  name: string;
+}
 
 interface SlotClicks {
   card: number;
@@ -31,8 +42,10 @@ interface LoadedModule {
     title: string;
     subtitle: string | null;
     imageLinkUrl: string | null;
-    buttons: { label: string; url: string }[];
+    buttons: { label: string; url: string | null; moduleId: string | null }[];
   }[];
+  quickReplies: { title: string; moduleId: string }[];
+  quickReplyPrompt: string | null;
   automations: { id: string; name: string; dmOnly: boolean; isActive: boolean }[];
   clicks: SlotClicks[];
 }
@@ -42,8 +55,11 @@ const emptyCard = (): PreviewCard => ({
   title: "",
   subtitle: "",
   imageLinkUrl: "",
-  buttons: [{ label: "", url: "" }],
+  buttons: [{ label: "", url: "", kind: "url", moduleId: "" }],
 });
+
+const isBlankButton = (b: DraftButton) =>
+  !b.label.trim() && !(b.kind === "module" ? b.moduleId : b.url.trim());
 
 const isHttps = (value: string) => /^https:\/\/\S+$/i.test(value.trim());
 
@@ -68,6 +84,19 @@ export default function ModuleEditor({ moduleId }: { moduleId?: string }) {
   const [cards, setCards] = useState<PreviewCard[]>([emptyCard()]);
   const [usedBy, setUsedBy] = useState<LoadedModule["automations"]>([]);
   const [clicks, setClicks] = useState<SlotClicks[]>([]);
+  const [quickReplies, setQuickReplies] = useState<DraftQuickReply[]>([]);
+  const [quickReplyPrompt, setQuickReplyPrompt] = useState("");
+  const [moduleOptions, setModuleOptions] = useState<ModuleOption[]>([]);
+
+  // Modules a button or quick reply can send (this one included: "back to menu").
+  useEffect(() => {
+    fetch("/api/modules", { cache: "no-store" })
+      .then((r) => r.json())
+      .then((payload) => {
+        if (payload.success) setModuleOptions(payload.data);
+      })
+      .catch(() => {});
+  }, []);
 
   useEffect(() => {
     if (!moduleId) return;
@@ -94,10 +123,17 @@ export default function ModuleEditor({ moduleId }: { moduleId?: string }) {
               title: card.title,
               subtitle: card.subtitle ?? "",
               imageLinkUrl: card.imageLinkUrl ?? "",
-              buttons: card.buttons.length > 0 ? card.buttons : [],
+              buttons: card.buttons.map((b) => ({
+                label: b.label,
+                url: b.url ?? "",
+                kind: b.moduleId ? ("module" as const) : ("url" as const),
+                moduleId: b.moduleId ?? "",
+              })),
             }))
           : [emptyCard()]
       );
+      setQuickReplies(loaded.quickReplies ?? []);
+      setQuickReplyPrompt(loaded.quickReplyPrompt ?? "");
       setUsedBy(loaded.automations);
       setClicks(loaded.clicks);
       setLoading(false);
@@ -112,7 +148,7 @@ export default function ModuleEditor({ moduleId }: { moduleId?: string }) {
     setCards((prev) => prev.map((card, i) => (i === index ? { ...card, ...patch } : card)));
   }
 
-  function updateButton(cardIndex: number, buttonIndex: number, patch: Partial<{ label: string; url: string }>) {
+  function updateButton(cardIndex: number, buttonIndex: number, patch: Partial<DraftButton>) {
     setSaved(false);
     setCards((prev) =>
       prev.map((card, i) =>
@@ -143,7 +179,7 @@ export default function ModuleEditor({ moduleId }: { moduleId?: string }) {
     for (const [index, card] of cards.entries()) {
       const n = index + 1;
       if (!card.title.trim()) return t("Card {n} needs a title.", { n });
-      const buttons = card.buttons.filter((b) => b.label.trim() || b.url.trim());
+      const buttons = card.buttons.filter((b) => !isBlankButton(b));
       if (!card.imageUrl.trim() && !card.subtitle.trim() && buttons.length === 0)
         return t("Card {n} needs an image, a description or a button.", { n });
       if (card.imageUrl.trim() && !isHttps(card.imageUrl))
@@ -151,9 +187,17 @@ export default function ModuleEditor({ moduleId }: { moduleId?: string }) {
       if (card.imageLinkUrl.trim() && !isHttps(card.imageLinkUrl))
         return t("Card {n}: the image tap link must start with https://", { n });
       for (const button of buttons) {
-        if (!button.label.trim() || !isHttps(button.url))
+        if (button.kind === "module") {
+          if (!button.label.trim() || !button.moduleId)
+            return t("Card {n}: a module button needs a label and a module to send.", { n });
+        } else if (!button.label.trim() || !isHttps(button.url)) {
           return t("Card {n}: every button needs a label and an https:// link.", { n });
+        }
       }
+    }
+    for (const reply of quickReplies) {
+      if (!reply.title.trim() || !reply.moduleId)
+        return t("Every quick reply needs a title and a module to send.");
     }
     return null;
   }
@@ -175,9 +219,15 @@ export default function ModuleEditor({ moduleId }: { moduleId?: string }) {
         subtitle: card.subtitle.trim() || null,
         imageLinkUrl: card.imageLinkUrl.trim() || null,
         buttons: card.buttons
-          .filter((b) => b.label.trim() || b.url.trim())
-          .map((b) => ({ label: b.label.trim(), url: b.url.trim() })),
+          .filter((b) => !isBlankButton(b))
+          .map((b) =>
+            b.kind === "module"
+              ? { label: b.label.trim(), url: null, moduleId: b.moduleId }
+              : { label: b.label.trim(), url: b.url.trim(), moduleId: null }
+          ),
       })),
+      quickReplies: quickReplies.map((r) => ({ title: r.title.trim(), moduleId: r.moduleId })),
+      quickReplyPrompt: quickReplyPrompt.trim() || null,
     };
     try {
       const res = await fetch(moduleId ? `/api/modules?id=${moduleId}` : "/api/modules", {
@@ -447,12 +497,38 @@ export default function ModuleEditor({ moduleId }: { moduleId?: string }) {
                           placeholder={t("Button text")}
                           className={`${inputClass} sm:w-40`}
                         />
-                        <input
-                          value={button.url}
-                          onChange={(e) => updateButton(index, buttonIndex, { url: e.target.value })}
-                          placeholder="https://"
-                          className={inputClass}
-                        />
+                        <select
+                          value={button.kind}
+                          onChange={(e) =>
+                            updateButton(index, buttonIndex, { kind: e.target.value as DraftButton["kind"] })
+                          }
+                          className={`${inputClass} sm:w-36`}
+                          aria-label={t("Button action")}
+                        >
+                          <option value="url">{t("Open a link")}</option>
+                          <option value="module">{t("Send a module")}</option>
+                        </select>
+                        {button.kind === "module" ? (
+                          <select
+                            value={button.moduleId}
+                            onChange={(e) => updateButton(index, buttonIndex, { moduleId: e.target.value })}
+                            className={inputClass}
+                          >
+                            <option value="">{t("Choose a module…")}</option>
+                            {moduleOptions.map((m) => (
+                              <option key={m.id} value={m.id}>
+                                {m.id === moduleId ? `${m.name} (${t("this module")})` : m.name}
+                              </option>
+                            ))}
+                          </select>
+                        ) : (
+                          <input
+                            value={button.url}
+                            onChange={(e) => updateButton(index, buttonIndex, { url: e.target.value })}
+                            placeholder="https://"
+                            className={inputClass}
+                          />
+                        )}
                         <div className="flex shrink-0 items-center gap-2">
                           {stats && (
                             <span className="text-xs text-muted">{t("{count} clicks", { count: stats.uniqueClicks })}</span>
@@ -477,7 +553,11 @@ export default function ModuleEditor({ moduleId }: { moduleId?: string }) {
                   })}
                   {card.buttons.length < MAX_BUTTONS && (
                     <button
-                      onClick={() => updateCard(index, { buttons: [...card.buttons, { label: "", url: card.imageLinkUrl }] })}
+                      onClick={() =>
+                        updateCard(index, {
+                          buttons: [...card.buttons, { label: "", url: card.imageLinkUrl, kind: "url", moduleId: "" }],
+                        })
+                      }
                       className="text-xs font-medium text-accent hover:underline"
                     >
                       {t("+ Add a button")}
@@ -499,6 +579,80 @@ export default function ModuleEditor({ moduleId }: { moduleId?: string }) {
               {t("+ Add a card ({count}/{max})", { count: cards.length, max: MAX_CARDS })}
             </button>
           )}
+
+          <section className="panel space-y-3 rounded p-5">
+            <div>
+              <h3 className="text-sm font-semibold">{t("Quick replies")}</h3>
+              <p className="mt-1 text-xs text-muted">
+                {t("Tappable chips under the reply. Each one sends another module, so people can choose what to see next.")}
+              </p>
+            </div>
+            {quickReplies.length > 0 && (
+              <label className="block">
+                <span className="mb-1 block text-xs text-muted">{t("Message the chips sit under")}</span>
+                <input
+                  value={quickReplyPrompt}
+                  maxLength={1000}
+                  onChange={(e) => {
+                    setSaved(false);
+                    setQuickReplyPrompt(e.target.value);
+                  }}
+                  placeholder={t("e.g. Want to see something else? 👇")}
+                  className={inputClass}
+                />
+              </label>
+            )}
+            {quickReplies.map((reply, replyIndex) => (
+              <div key={replyIndex} className="flex flex-col gap-2 sm:flex-row">
+                <input
+                  value={reply.title}
+                  maxLength={LABEL_MAX}
+                  onChange={(e) => {
+                    setSaved(false);
+                    setQuickReplies((prev) => prev.map((r, i) => (i === replyIndex ? { ...r, title: e.target.value } : r)));
+                  }}
+                  placeholder={t("Chip text")}
+                  className={`${inputClass} sm:w-48`}
+                />
+                <select
+                  value={reply.moduleId}
+                  onChange={(e) => {
+                    setSaved(false);
+                    setQuickReplies((prev) => prev.map((r, i) => (i === replyIndex ? { ...r, moduleId: e.target.value } : r)));
+                  }}
+                  className={inputClass}
+                >
+                  <option value="">{t("Choose a module…")}</option>
+                  {moduleOptions.map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {m.id === moduleId ? `${m.name} (${t("this module")})` : m.name}
+                    </option>
+                  ))}
+                </select>
+                <button
+                  onClick={() => {
+                    setSaved(false);
+                    setQuickReplies((prev) => prev.filter((_, i) => i !== replyIndex));
+                  }}
+                  className="shrink-0 rounded border border-border px-2 py-2 text-xs text-muted hover:text-foreground"
+                  aria-label={t("Remove quick reply")}
+                >
+                  ✕
+                </button>
+              </div>
+            ))}
+            {quickReplies.length < MAX_QUICK_REPLIES && (
+              <button
+                onClick={() => {
+                  setSaved(false);
+                  setQuickReplies((prev) => [...prev, { title: "", moduleId: "" }]);
+                }}
+                className="text-xs font-medium text-accent hover:underline"
+              >
+                {t("+ Add a quick reply ({count}/{max})", { count: quickReplies.length, max: MAX_QUICK_REPLIES })}
+              </button>
+            )}
+          </section>
 
           {moduleId && (
             <section className="panel rounded p-5">
@@ -530,7 +684,11 @@ export default function ModuleEditor({ moduleId }: { moduleId?: string }) {
         <div>
           <p className="mb-4 text-sm text-muted">{t("Preview")}</p>
           <div className="lg:sticky lg:top-6">
-            <ModulePreview introText={introText} cards={cards} />
+            <ModulePreview
+              introText={introText}
+              cards={cards}
+              quickReplies={quickReplies.map((r) => r.title).filter((title) => title.trim())}
+            />
             <p className="mt-3 text-xs text-muted">
               {t("Cards show in the Instagram app. Instagram on the web does not display them.")}
             </p>

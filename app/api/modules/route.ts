@@ -1,8 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/db/client";
 import { syncModuleLinks } from "@/lib/modules/links";
-import { moduleInputSchema, parseStoredCards } from "@/lib/modules/schema";
+import {
+  moduleInputSchema,
+  parseStoredCards,
+  parseStoredQuickReplies,
+  referencedModuleIds,
+  type ModuleInput,
+} from "@/lib/modules/schema";
 import { summarizeModuleClicks } from "@/lib/modules/stats";
+import { parseStoredMenu } from "@/lib/campaigns/persistent-menu";
 import {
   canManageWorkspace,
   getCurrentWorkspaceContext,
@@ -12,6 +19,18 @@ export const dynamic = "force-dynamic";
 
 function fail(error: string, status: number, details?: unknown) {
   return NextResponse.json({ success: false, error, ...(details ? { details } : {}) }, { status });
+}
+
+/** Every module a button or quick reply sends must exist in this workspace. */
+async function missingReferences(workspaceId: string, input: ModuleInput) {
+  const ids = referencedModuleIds(input);
+  if (ids.length === 0) return [];
+  const found = await prisma.messageModule.findMany({
+    where: { workspaceId, id: { in: ids } },
+    select: { id: true },
+  });
+  const known = new Set(found.map((m) => m.id));
+  return ids.filter((id) => !known.has(id));
 }
 
 async function requireContext(write: boolean) {
@@ -50,6 +69,7 @@ export async function GET(request: NextRequest) {
       data: {
         ...moduleRecord,
         cards: parseStoredCards(moduleRecord.cards),
+        quickReplies: parseStoredQuickReplies(moduleRecord.quickReplies),
         clicks: summarizeModuleClicks(moduleRecord.links, clicks),
       },
     });
@@ -98,6 +118,8 @@ export async function POST(request: NextRequest) {
           name: `${source.name} (copy)`.slice(0, 100),
           introText: source.introText,
           cards: cards as object[],
+          quickReplies: parseStoredQuickReplies(source.quickReplies) as object[],
+          quickReplyPrompt: source.quickReplyPrompt,
           utmSource: source.utmSource,
           utmMedium: source.utmMedium,
           utmCampaign: source.utmCampaign,
@@ -111,10 +133,18 @@ export async function POST(request: NextRequest) {
 
   const parsed = moduleInputSchema.safeParse(body);
   if (!parsed.success) return fail("Invalid input", 400, parsed.error.flatten());
+  if ((await missingReferences(workspaceId, parsed.data)).length > 0) {
+    return fail("A button or quick reply points at a module that does not exist", 400);
+  }
 
   const created = await prisma.$transaction(async (tx) => {
     const moduleRecord = await tx.messageModule.create({
-      data: { workspaceId, ...parsed.data, cards: parsed.data.cards as object[] },
+      data: {
+        workspaceId,
+        ...parsed.data,
+        cards: parsed.data.cards as object[],
+        quickReplies: parsed.data.quickReplies as object[],
+      },
     });
     await syncModuleLinks(tx, {
       workspaceId,
@@ -144,11 +174,18 @@ export async function PATCH(request: NextRequest) {
     select: { id: true },
   });
   if (!existing) return fail("Module not found", 404);
+  if ((await missingReferences(workspaceId, parsed.data)).length > 0) {
+    return fail("A button or quick reply points at a module that does not exist", 400);
+  }
 
   const updated = await prisma.$transaction(async (tx) => {
     const moduleRecord = await tx.messageModule.update({
       where: { id },
-      data: { ...parsed.data, cards: parsed.data.cards as object[] },
+      data: {
+        ...parsed.data,
+        cards: parsed.data.cards as object[],
+        quickReplies: parsed.data.quickReplies as object[],
+      },
     });
     await syncModuleLinks(tx, {
       workspaceId,
@@ -181,6 +218,30 @@ export async function DELETE(request: NextRequest) {
     return fail("Module is in use", 409, {
       usedBy: moduleRecord.automations.map((automation) => automation.name),
     });
+  }
+  // Another module's button or quick reply may still send this one.
+  const others = await prisma.messageModule.findMany({
+    where: { workspaceId: context.workspaceId, id: { not: id } },
+    select: { name: true, cards: true, quickReplies: true },
+  });
+  const linkedFrom = others.filter((other) =>
+    referencedModuleIds({
+      cards: parseStoredCards(other.cards),
+      quickReplies: parseStoredQuickReplies(other.quickReplies),
+    }).includes(id)
+  );
+  if (linkedFrom.length > 0) {
+    return fail("Module is in use", 409, { usedBy: linkedFrom.map((other) => other.name) });
+  }
+  const menus = await prisma.instagramAccount.findMany({
+    where: { workspaceId: context.workspaceId },
+    select: { username: true, persistentMenu: true },
+  });
+  const inMenu = menus.filter((account) =>
+    parseStoredMenu(account.persistentMenu).some((item) => item.moduleId === id)
+  );
+  if (inMenu.length > 0) {
+    return fail("Module is in use", 409, { usedBy: inMenu.map((account) => `@${account.username} menu`) });
   }
 
   await prisma.messageModule.delete({ where: { id } });
