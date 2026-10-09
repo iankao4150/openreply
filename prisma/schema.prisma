@@ -83,6 +83,7 @@ model Workspace {
   contacts          Contact[]
   broadcasts        Broadcast[]
   giveawayDraws     GiveawayDraw[]
+  mediaAssets       MediaAsset[]
   dmLogs            DmLog[]
   trackedLinks      TrackedLink[]
   linkClicks        LinkClick[]
@@ -656,6 +657,22 @@ model GiveawayDraw {
 
   workspace        Workspace        @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
   instagramAccount InstagramAccount @relation(fields: [instagramAccountId], references: [id], onDelete: Cascade)
+
+  @@index([workspaceId, createdAt])
+}
+
+/// An image uploaded for a message card. Served publicly at /media/<id>.<ext>
+/// because Instagram fetches the card image when the message is sent.
+model MediaAsset {
+  id          String   @id @default(cuid())
+  workspaceId String
+  contentType String
+  bytes       Bytes
+  size        Int
+  createdById String?
+  createdAt   DateTime @default(now())
+
+  workspace Workspace @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
 
   @@index([workspaceId, createdAt])
 }
