@@ -4,6 +4,7 @@ import LanguageSwitcher from "@/components/language-switcher";
 import { useI18n } from "@/lib/i18n/provider";
 import PersistentMenuEditor from "@/components/persistent-menu-editor";
 import BusinessHoursEditor from "@/components/business-hours-editor";
+import PasswordSettings from "@/components/password-settings";
 import { Suspense, useEffect, useState } from "react";
 import type { AccountOption } from "@/components/account-select";
 import { InstagramConnectNotice } from "@/components/instagram-connect-notice";
@@ -175,6 +176,8 @@ export default function SettingsPage() {
       <Suspense fallback={null}>
         <InstagramConnectNotice />
       </Suspense>
+
+      <PasswordSettings />
 
       <section className="panel rounded p-4 sm:p-6 space-y-3">
         <h2 className="text-base font-semibold">{t("Interface language")}</h2>
