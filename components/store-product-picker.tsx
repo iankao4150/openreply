@@ -1,5 +1,6 @@
 "use client";
 
+import { X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { useI18n } from "@/lib/i18n/provider";
 
@@ -166,7 +167,7 @@ export default function StoreProductPicker({
           <div className="flex items-center justify-between gap-3">
             <h2 className="text-base font-semibold">{t("Choose products")}</h2>
             <button onClick={onClose} className="text-sm text-muted hover:text-foreground" aria-label={t("Close")}>
-              ✕
+              <X className="h-4 w-4" aria-hidden />
             </button>
           </div>
           <div className="flex flex-col gap-2 sm:flex-row">

@@ -1,5 +1,6 @@
 "use client";
 
+import { MessageCircle, Trophy } from "lucide-react";
 /**
  * Comment giveaway: pick winners at random among a post's commenters, with
  * optional rules (a keyword, tagging friends, one entry per person). Every
@@ -186,7 +187,7 @@ export default function GiveawayPage() {
                   )}
                   {typeof p.comments_count === "number" && (
                     <span className="absolute bottom-1 right-1 rounded bg-black/60 px-1 text-[10px] text-white">
-                      💬 {p.comments_count}
+                      <MessageCircle className="mr-0.5 inline h-2.5 w-2.5 align-[-1px]" aria-hidden />{p.comments_count}
                     </span>
                   )}
                 </button>
@@ -258,7 +259,7 @@ export default function GiveawayPage() {
 
         {result && (
           <div className="rounded border border-accent/30 bg-accent/5 p-4">
-            <p className="text-sm font-semibold">🎉 {t("Winners")}</p>
+            <p className="flex items-center gap-1.5 text-sm font-semibold"><Trophy className="h-4 w-4 text-accent" aria-hidden />{t("Winners")}</p>
             <p className="mb-2 text-xs text-muted">
               {t("{entrants} eligible entries from {comments} comments", {
                 entrants: result.entrants,

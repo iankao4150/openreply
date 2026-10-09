@@ -1,5 +1,6 @@
 "use client";
 
+import { AlertTriangle } from "lucide-react";
 /**
  * Campaigns List Page
  *
@@ -502,7 +503,7 @@ export default function CampaignsPage() {
                 )}
                 {(auto.conflicts ?? []).length > 0 && (
                   <p className="mt-1 text-xs text-warning">
-                    ⚠ {t("Overlaps with:")}{" "}
+                    <AlertTriangle className="mr-1 inline h-3.5 w-3.5 align-[-2px]" aria-hidden />{t("Overlaps with:")}{" "}
                     {[...new Set((auto.conflicts ?? []).map((c) => c.otherName))].join("、")}
                   </p>
                 )}

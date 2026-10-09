@@ -39,7 +39,7 @@ export interface SendableModule {
   links: SentModuleLink[];
 }
 
-const DEFAULT_QUICK_REPLY_PROMPT = "👇";
+const DEFAULT_QUICK_REPLY_PROMPT = "Choose one:";
 
 export type ModuleDelivery = "cards" | "button" | "text";
 

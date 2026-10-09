@@ -701,7 +701,7 @@ describe("DM Worker — Full Pipeline", () => {
         ...mockAutomation,
         requireFollow: true,
         followPromptMessage: "Follow me first {username}, then tap 👇",
-        followPromptButtonLabel: "I'm following ✅",
+        followPromptButtonLabel: "I'm following",
         trackedLinks: [
           {
             slug: "abc123",
@@ -722,7 +722,7 @@ describe("DM Worker — Full Pipeline", () => {
       "ig_456",
       "comment_555",
       "Follow me first commenter_user, then tap 👇",
-      "I'm following ✅",
+      "I'm following",
       "followcheck:auto_789"
     );
     expect(mockSendPrivateReplyWithLinkButton).not.toHaveBeenCalled();
@@ -736,7 +736,7 @@ describe("DM Worker — Full Pipeline", () => {
         ...mockAutomation,
         requireFollow: true,
         followPromptMessage: "Follow me first, then tap 👇",
-        followPromptButtonLabel: "I'm following ✅",
+        followPromptButtonLabel: "I'm following",
         dmMessage: "Hey {username}! Here is the offer: {link}",
         linkButtonLabel: "Get offer",
         trackedLinks: [
@@ -776,7 +776,7 @@ describe("DM Worker — Full Pipeline", () => {
         openingDmMessage: "Hey {username}, welcome!",
         openingDmButtonLabel: "Get the link",
         requireFollow: true,
-        followPromptButtonLabel: "I'm following ✅",
+        followPromptButtonLabel: "I'm following",
         trackedLinks: [
           {
             slug: "abc123",
@@ -1233,7 +1233,7 @@ describe("DM Worker — DM keyword trigger", () => {
       "ig_456",
       "commenter_999",
       expect.any(String),
-      "I'm following ✅",
+      "I'm following",
       "followcheck:auto_789"
     );
     expect(mockSendDirectMessage).not.toHaveBeenCalled();

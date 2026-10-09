@@ -1,5 +1,6 @@
 "use client";
 
+import { X } from "lucide-react";
 /**
  * Campaign Builder
  *
@@ -874,7 +875,7 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
                         prev.map((m, idx) => (idx === i ? e.target.value : m))
                       )
                     }
-                    placeholder={t("Sent you a DM! 📩")}
+                    placeholder={t("Sent you a DM!")}
                     maxLength={1000}
                     className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-foreground placeholder:text-zinc-500 focus:border-accent/40 focus:outline-none"
                   />
@@ -889,7 +890,7 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
                       className="shrink-0 px-2 text-muted hover:text-error"
                       aria-label={t("Remove reply")}
                     >
-                      ✕
+                      <X className="h-4 w-4" aria-hidden />
                     </button>
                   )}
                 </div>
@@ -970,7 +971,7 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
                 <textarea
                   value={openingDmMessage}
                   onChange={(e) => setOpeningDmMessage(e.target.value)}
-                  placeholder={t("Hey there! I'm so happy you're here 😊")}
+                  placeholder={t("Hey there! I'm so happy you're here.")}
                   rows={3}
                   className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-foreground placeholder:text-zinc-500 focus:border-accent/40 focus:outline-none resize-none"
                   maxLength={1000}
@@ -1100,7 +1101,7 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
                         onChange={(e) => setTextOpener(e.target.value)}
                         maxLength={1000}
                         rows={2}
-                        placeholder={t("Hi {username}! Reply with any message and I'll send it to you right away 👇", { username: "{username}" })}
+                        placeholder={t("Hi {username}! Reply with any message and I'll send it to you right away.", { username: "{username}" })}
                         className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-foreground placeholder:text-zinc-500 focus:border-accent/40 focus:outline-none"
                       />
                     )}
@@ -1195,7 +1196,7 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
                 <textarea
                   value={followUpMessage}
                   onChange={(e) => setFollowUpMessage(e.target.value)}
-                  placeholder={t("Btw just wanted to say thanks for following me, I appreciate the support 🙌")}
+                  placeholder={t("Btw just wanted to say thanks for following me, I appreciate the support!")}
                   rows={3}
                   className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm text-foreground placeholder:text-zinc-500 focus:border-accent/40 focus:outline-none resize-none"
                   maxLength={1000}
@@ -1250,7 +1251,7 @@ export default function CampaignBuilder({ mode, campaignId }: CampaignBuilderPro
             openingDmButtonLabel={openingDmButtonLabel}
             revealMessage={
               replyMode === "module"
-                ? `🃏 ${moduleOptions.find((m) => m.id === messageModuleId)?.name ?? ""}`
+                ? `${t("Module")}: ${moduleOptions.find((m) => m.id === messageModuleId)?.name ?? ""}`
                 : dmMessage
             }
             hasLink={replyMode === "text" && Boolean(trackedDestinationUrl.trim())}

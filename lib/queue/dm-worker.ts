@@ -39,7 +39,7 @@ import {
 import { setPendingModule, takePendingModule } from "@/lib/ops/pending-reply";
 
 const DEFAULT_TEXT_OPENER =
-  "Hi {username}! Reply with any message and I'll send it to you right away 👇";
+  "Hi {username}! Reply with any message and I'll send it to you right away.";
 import { prisma } from "@/lib/db/client";
 import {
   MetaApiError,
@@ -1848,7 +1848,7 @@ async function processMessage(job: Job<ProcessMessageJob>): Promise<void> {
         const promptText = renderMessageWithoutLink({
           message:
             automation.followPromptMessage ||
-            "Almost there! Follow me and tap the button below to grab your link 💛",
+            "Almost there! Follow me and tap the button below to grab your link.",
           commenterName,
         });
         await sendDirectMessageWithButton({
@@ -1856,7 +1856,7 @@ async function processMessage(job: Job<ProcessMessageJob>): Promise<void> {
           instagramAccountId: automation.instagramAccount.instagramId,
           userId: senderId,
           text: promptText,
-          buttonTitle: automation.followPromptButtonLabel || "I'm following ✅",
+          buttonTitle: automation.followPromptButtonLabel || "I'm following",
           payload: `followcheck:${automation.id}`,
         });
       } else {

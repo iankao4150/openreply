@@ -1,5 +1,6 @@
 "use client";
 
+import { Tag } from "lucide-react";
 /**
  * Broadcasts: send a message module to the contacts who messaged the account
  * in the last 24 hours, optionally only those with a tag. Instagram allows no
@@ -287,7 +288,7 @@ export default function BroadcastsPage() {
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="truncate text-sm font-semibold">{b.name}</span>
                   <span className="rounded-full border border-border px-2 py-0.5 text-xs text-muted">{statusLabel(b.status)}</span>
-                  {b.tags.length > 0 && <span className="text-xs text-muted">🏷 {b.tags.join(", ")}</span>}
+                  {b.tags.length > 0 && <span className="inline-flex items-center gap-1 text-xs text-muted"><Tag className="h-3 w-3" aria-hidden />{b.tags.join(", ")}</span>}
                 </div>
                 <p className="mt-1 text-xs text-muted">
                   {new Date(b.createdAt).toLocaleString(locale)} · @{b.instagramAccount.username} ·{" "}

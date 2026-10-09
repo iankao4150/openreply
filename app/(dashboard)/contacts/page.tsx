@@ -1,5 +1,6 @@
 "use client";
 
+import { ArrowRight } from "lucide-react";
 /**
  * Contacts: everyone who commented on a watched post, messaged the account,
  * tapped a button or mentioned it in a story, with the tags campaigns gave
@@ -238,7 +239,7 @@ export default function ContactsPage() {
                     ) : (
                       <span className="text-sm font-semibold text-muted">{t("(name unknown)")}</span>
                     )}
-                    {accounts.length > 1 && <span className="text-xs text-muted">→ @{contact.account}</span>}
+                    {accounts.length > 1 && <span className="inline-flex items-center gap-1 text-xs text-muted"><ArrowRight className="h-3 w-3" aria-hidden />@{contact.account}</span>}
                     {hours !== null && (
                       <span className="rounded-full bg-success/10 px-2 py-0.5 text-xs font-medium text-success">
                         {t("Can message · {count} h left", { count: hours })}

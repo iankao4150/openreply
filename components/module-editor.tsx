@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
+import { ArrowLeft, ChevronDown, ChevronLeft, ChevronRight, ChevronUp, Copy, Plus, ShoppingBag, Trash2, X } from "lucide-react";
 import ModulePreview, { type PreviewCard } from "@/components/module-preview";
 import CardImageField from "@/components/card-image-field";
 import StoreProductPicker, { type StoreProduct } from "@/components/store-product-picker";
@@ -363,8 +364,9 @@ export default function ModuleEditor({ moduleId }: { moduleId?: string }) {
   return (
     <div className="space-y-6 pb-20 lg:pb-0">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <Link href="/modules" className="text-sm text-muted hover:text-foreground">
-          ← {t("Message modules")}
+        <Link href="/modules" className="inline-flex items-center gap-1 text-sm text-muted hover:text-foreground">
+          <ArrowLeft className="h-4 w-4" aria-hidden />
+          {t("Message modules")}
         </Link>
         <div className="hidden items-center gap-2 lg:flex">
           {saved && <span className="text-sm text-success">{t("Changes saved")}</span>}
@@ -428,7 +430,8 @@ export default function ModuleEditor({ moduleId }: { moduleId?: string }) {
                   }}
                   className="rounded-full border border-border px-2 py-0.5 text-[11px] font-normal text-muted hover:text-foreground"
                 >
-                  + {t("their name")}
+                  <Plus className="mr-0.5 inline h-3 w-3 align-[-1px]" aria-hidden />
+                  {t("their name")}
                 </button>
               </span>
               <textarea
@@ -439,7 +442,7 @@ export default function ModuleEditor({ moduleId }: { moduleId?: string }) {
                 }}
                 maxLength={1000}
                 rows={2}
-                placeholder={t("Hi {username}! Here are the details 👇", { username: "{username}" })}
+                placeholder={t("Hi {username}! Here are the details:", { username: "{username}" })}
                 className={inputClass}
               />
               <span className="mt-1 block text-xs text-muted">
@@ -460,7 +463,8 @@ export default function ModuleEditor({ moduleId }: { moduleId?: string }) {
                   disabled={cards.length >= MAX_CARDS && !(cards.length === 1 && isBlankCard(cards[0]))}
                   className="rounded-md border border-accent/40 bg-accent/10 px-3 py-1.5 text-xs font-semibold text-accent hover:bg-accent/15 disabled:opacity-40"
                 >
-                  🛍 {t("Add from store")}
+                  <ShoppingBag className="mr-1 inline h-3.5 w-3.5 align-[-2px]" aria-hidden />
+                  {t("Add from store")}
                 </button>
                 <button
                   type="button"
@@ -468,7 +472,8 @@ export default function ModuleEditor({ moduleId }: { moduleId?: string }) {
                   disabled={cards.length >= MAX_CARDS}
                   className="rounded-md border border-border px-3 py-1.5 text-xs font-medium text-muted hover:text-foreground disabled:opacity-40"
                 >
-                  + {t("Blank card")}
+                  <Plus className="mr-0.5 inline h-3.5 w-3.5 align-[-2px]" aria-hidden />
+                  {t("Blank card")}
                 </button>
               </div>
             </div>
@@ -514,7 +519,7 @@ export default function ModuleEditor({ moduleId }: { moduleId?: string }) {
                   className="flex h-16 w-16 shrink-0 items-center justify-center rounded-lg border-2 border-dashed border-border text-xl text-muted hover:border-accent/40 hover:text-foreground"
                   aria-label={t("Blank card")}
                 >
-                  +
+                  <Plus className="h-5 w-5" aria-hidden />
                 </button>
               )}
             </div>
@@ -529,7 +534,7 @@ export default function ModuleEditor({ moduleId }: { moduleId?: string }) {
                     className="rounded border border-border px-2 py-1 text-muted hover:text-foreground disabled:opacity-30"
                     aria-label={t("Move left")}
                   >
-                    ←
+                    <ChevronLeft className="h-4 w-4" aria-hidden />
                   </button>
                   <button
                     onClick={() => moveCard(active, active + 1)}
@@ -537,7 +542,7 @@ export default function ModuleEditor({ moduleId }: { moduleId?: string }) {
                     className="rounded border border-border px-2 py-1 text-muted hover:text-foreground disabled:opacity-30"
                     aria-label={t("Move right")}
                   >
-                    →
+                    <ChevronRight className="h-4 w-4" aria-hidden />
                   </button>
                   <button
                     onClick={() => {
@@ -550,6 +555,7 @@ export default function ModuleEditor({ moduleId }: { moduleId?: string }) {
                     disabled={cards.length >= MAX_CARDS}
                     className="rounded border border-border px-2 py-1 text-muted hover:text-foreground disabled:opacity-30"
                   >
+                    <Copy className="mr-1 inline h-3.5 w-3.5 align-[-2px]" aria-hidden />
                     {t("Duplicate card")}
                   </button>
                   <button
@@ -560,6 +566,7 @@ export default function ModuleEditor({ moduleId }: { moduleId?: string }) {
                     }}
                     className="rounded border border-error/20 px-2 py-1 text-error hover:bg-error/10"
                   >
+                    <Trash2 className="mr-1 inline h-3.5 w-3.5 align-[-2px]" aria-hidden />
                     {t("Remove")}
                   </button>
                 </div>
@@ -679,7 +686,7 @@ export default function ModuleEditor({ moduleId }: { moduleId?: string }) {
                           className="ml-auto text-xs text-muted hover:text-error"
                           aria-label={t("Remove button")}
                         >
-                          ✕
+                          <X className="h-4 w-4" aria-hidden />
                         </button>
                       </div>
                       <div className="flex flex-col gap-2 sm:flex-row">
@@ -755,7 +762,7 @@ export default function ModuleEditor({ moduleId }: { moduleId?: string }) {
                     touch();
                     setQuickReplyPrompt(e.target.value);
                   }}
-                  placeholder={t("e.g. Want to see something else? 👇")}
+                  placeholder={t("e.g. Want to see something else?")}
                   className={inputClass}
                 />
               </label>
@@ -795,7 +802,7 @@ export default function ModuleEditor({ moduleId }: { moduleId?: string }) {
                   className="shrink-0 rounded border border-border px-2 py-2 text-xs text-muted hover:text-foreground"
                   aria-label={t("Remove quick reply")}
                 >
-                  ✕
+                  <X className="h-4 w-4" aria-hidden />
                 </button>
               </div>
             ))}
@@ -822,7 +829,7 @@ export default function ModuleEditor({ moduleId }: { moduleId?: string }) {
               <span>
                 {t("Link tracking")} <span className="font-normal text-muted">UTM</span>
               </span>
-              <span className="text-xs text-muted">{showUtm ? "▲" : "▼"}</span>
+              {showUtm ? <ChevronUp className="h-4 w-4 text-muted" aria-hidden /> : <ChevronDown className="h-4 w-4 text-muted" aria-hidden />}
             </button>
             {showUtm && (
               <div className="space-y-3">

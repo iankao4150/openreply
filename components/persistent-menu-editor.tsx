@@ -1,5 +1,6 @@
 "use client";
 
+import { X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useI18n } from "@/lib/i18n/provider";
 
@@ -130,7 +131,7 @@ export default function PersistentMenuEditor({
             className="shrink-0 rounded border border-border px-2 py-1 text-xs text-muted hover:text-foreground"
             aria-label={t("Remove menu item")}
           >
-            ✕
+            <X className="h-3.5 w-3.5" aria-hidden />
           </button>
         </div>
       ))}

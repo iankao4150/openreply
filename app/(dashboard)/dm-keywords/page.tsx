@@ -1,5 +1,6 @@
 "use client";
 
+import { AlertTriangle, MessageCircleQuestion, Tag } from "lucide-react";
 /**
  * DM auto-replies, four kinds of rule:
  * - KEYWORD: a DM or story reply containing one of the words;
@@ -604,7 +605,7 @@ export default function DmKeywordsPage() {
                     </div>
                   )}
                   {rule.dmRuleType === "ICE_BREAKER" && (
-                    <p className="mb-2 text-sm">❓ {rule.iceBreakerQuestion}</p>
+                    <p className="mb-2 flex items-center gap-1.5 text-sm"><MessageCircleQuestion className="h-4 w-4 shrink-0 text-muted" aria-hidden />{rule.iceBreakerQuestion}</p>
                   )}
                   <p className="truncate text-sm text-muted">
                     {rule.messageModule ? (
@@ -634,11 +635,11 @@ export default function DmKeywordsPage() {
                       </>
                     )}
                     {rule.hoursMode && rule.hoursMode !== "ALWAYS" && <> · {hoursLabel(rule.hoursMode)}</>}
-                    {(rule.addTags ?? []).length > 0 && <> · 🏷 {rule.addTags.join(", ")}</>}
+                    {(rule.addTags ?? []).length > 0 && <> · <Tag className="inline h-3 w-3 align-[-1px]" aria-hidden /> {rule.addTags.join(", ")}</>}
                   </p>
                   {conflicts.length > 0 && (
                     <p className="mt-2 text-xs text-warning">
-                      ⚠ {t("Overlaps with (only the oldest replies):")} {conflicts.map((c) => c.otherName).join("、")}
+                      <AlertTriangle className="mr-1 inline h-3.5 w-3.5 align-[-2px]" aria-hidden />{t("Overlaps with (only the oldest replies):")} {conflicts.map((c) => c.otherName).join("、")}
                     </p>
                   )}
                 </div>

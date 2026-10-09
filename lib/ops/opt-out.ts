@@ -11,7 +11,7 @@ const START_WORDS = new Set(["start", "subscribe", "開始", "恢復", "恢復�
 
 export const OPT_OUT_CONFIRMATION =
   "已停止自動訊息，之後只有在你點選單或按鈕時才會回覆。想恢復請傳「開始」。\nAutomated messages are off; you'll only get a reply when you tap a menu item or button. Send START to turn them back on.";
-export const OPT_IN_CONFIRMATION = "已恢復自動訊息 👍\nAutomated messages are back on.";
+export const OPT_IN_CONFIRMATION = "已恢復自動訊息。\nAutomated messages are back on.";
 
 export function optOutCommand(text: string): "stop" | "start" | null {
   const normalized = text

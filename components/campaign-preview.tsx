@@ -254,7 +254,6 @@ function CommentsScreen({
   publicReplyMessage: string;
 }) {
   const { t } = useI18n();
-  const reactions = ["❤️", "🙌", "🔥", "👏", "😢", "😍", "😮", "😂"];
   return (
     <div className="flex h-full flex-col text-white">
       <StatusBar />
@@ -284,7 +283,7 @@ function CommentsScreen({
                 <span className="font-semibold">{username}</span>{" "}
                 <span className="text-zinc-500">{t("Now")}</span>
               </p>
-              <p className="text-sm">{publicReplyMessage || t("Sent you a DM! 📩")}</p>
+              <p className="text-sm">{publicReplyMessage || t("Sent you a DM!")}</p>
               <p className="mt-0.5 text-xs text-zinc-500">{t("Reply")}</p>
             </div>
             <span className="mt-1">{Ico.heart("h-3.5 w-3.5 text-zinc-500")}</span>
@@ -292,11 +291,6 @@ function CommentsScreen({
         )}
 
         <div className="mt-auto">
-          <div className="flex items-center justify-between px-1 pb-2 text-lg">
-            {reactions.map((r) => (
-              <span key={r}>{r}</span>
-            ))}
-          </div>
           <div className="mb-3 flex items-center gap-2">
             <Avatar url={avatarUrl} size={28} />
             <div className="flex-1 rounded-full bg-zinc-800 px-3 py-2 text-xs text-zinc-500">
@@ -459,7 +453,7 @@ function DmScreen({
                 <p className="whitespace-pre-wrap text-sm">
                   {followUpMessage.trim()
                     ? followUpMessage.replace(/\{username\}/g, SAMPLE_USER)
-                    : t("Btw just wanted to say thanks for following me, I appreciate the support 🙌")}
+                    : t("Btw just wanted to say thanks for following me, I appreciate the support!")}
                 </p>
               </div>
             </div>

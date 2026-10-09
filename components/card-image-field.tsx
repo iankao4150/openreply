@@ -1,5 +1,6 @@
 "use client";
 
+import { ImagePlus } from "lucide-react";
 import { useRef, useState } from "react";
 import { useI18n } from "@/lib/i18n/provider";
 import { uploadCardImage } from "@/lib/client/resize-image";
@@ -80,7 +81,7 @@ export default function CardImageField({
           <img src={value} alt="" className="h-full w-full object-cover" />
         ) : (
           <span className="px-4 text-xs leading-5 text-muted">
-            <span className="block text-2xl">🖼️</span>
+            <ImagePlus className="mx-auto mb-1 h-7 w-7 text-muted" aria-hidden />
             {t("Drop an image here or click to upload")}
             <span className="block text-[11px] text-zinc-500">{t("Square works best")}</span>
           </span>

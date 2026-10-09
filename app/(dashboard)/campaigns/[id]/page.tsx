@@ -1,5 +1,6 @@
 "use client";
 
+import { ArrowLeft } from "lucide-react";
 /**
  * Campaign Detail
  *
@@ -176,9 +177,10 @@ export default function CampaignDetailPage() {
         <div className="flex items-center gap-2">
           <Link
             href="/campaigns"
-            className="text-sm text-muted hover:text-foreground"
+            className="inline-flex items-center gap-1 text-sm text-muted hover:text-foreground"
           >
-            {t("← Campaigns")}
+            <ArrowLeft className="h-4 w-4" aria-hidden />
+            {t("Back to campaigns")}
           </Link>
         </div>
         <div className="flex items-center gap-2">
