@@ -6,7 +6,6 @@ import PersistentMenuEditor from "@/components/persistent-menu-editor";
 import BusinessHoursEditor from "@/components/business-hours-editor";
 import { Suspense, useEffect, useState } from "react";
 import type { AccountOption } from "@/components/account-select";
-import { ZernioConnection } from "@/components/zernio-connection";
 import { InstagramConnectNotice } from "@/components/instagram-connect-notice";
 
 interface SettingsData {
@@ -182,8 +181,6 @@ export default function SettingsPage() {
         <LanguageSwitcher />
         <p className="text-sm text-muted">{t("Saved in this browser. Campaign messages stay unchanged.")}</p>
       </section>
-
-      <ZernioConnection canManage={canManageMembers} />
 
       <section className="panel rounded p-4 sm:p-6">
         <h2 className="text-base font-semibold mb-6">{t("Instagram Connection")}</h2>
@@ -436,7 +433,7 @@ export default function SettingsPage() {
               {t("DMs sent this month")}
             </p>
             <p className="text-xs text-muted mt-0.5">
-              {t("Self-hosted — no plan limits.")}
+              {t("No monthly limit.")}
             </p>
           </div>
           <span className="text-sm font-semibold text-foreground">

@@ -79,7 +79,7 @@ export default function ModuleEditor({ moduleId }: { moduleId?: string }) {
   const [name, setName] = useState("");
   const [introText, setIntroText] = useState("");
   const [utmCampaign, setUtmCampaign] = useState("");
-  const [utmSource, setUtmSource] = useState("openreply");
+  const [utmSource, setUtmSource] = useState("paklab");
   const [utmMedium, setUtmMedium] = useState("dm");
   const [showUtm, setShowUtm] = useState(false);
   const [cards, setCards] = useState<PreviewCard[]>([emptyCard()]);
@@ -212,7 +212,7 @@ export default function ModuleEditor({ moduleId }: { moduleId?: string }) {
     const payload = {
       name: name.trim(),
       introText: introText.trim() || null,
-      utmSource: utmSource.trim() || "openreply",
+      utmSource: utmSource.trim() || "paklab",
       utmMedium: utmMedium.trim() || "dm",
       utmCampaign: utmCampaign.trim() || null,
       cards: cards.map((card) => ({

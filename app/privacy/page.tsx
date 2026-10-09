@@ -2,75 +2,70 @@ import type { Metadata } from "next";
 import LegalShell from "@/components/legal-shell";
 
 export const metadata: Metadata = {
-  title: "Privacy Policy - OpenReply",
+  title: "Privacy Policy - PAKLAB REPLY",
   description:
-    "How OpenReply handles Instagram account data, webhook payloads, billing data, and customer campaign information.",
+    "How PAKLAB REPLY handles Instagram account data, webhook payloads, billing data, and customer campaign information.",
 };
 
 export default function PrivacyPage() {
   return (
     <LegalShell
       title="Privacy Policy"
-      description="OpenReply helps businesses send Meta-compliant private replies when people comment on connected Instagram posts or reels."
-      updatedAt="May 24, 2026"
+      description="How PAKLAB REPLY handles Instagram data for the businesses that use it and the people who message them."
+      updatedAt="October 9, 2026"
     >
       <section>
-        <h2 className="text-xl font-bold text-white">Data We Collect</h2>
+        <h2 className="text-xl font-bold text-foreground">Who We Are</h2>
         <p className="mt-3">
-          We collect account email addresses for authentication, workspace and
-          billing metadata, connected Instagram account identifiers, encrypted
-          Instagram access tokens, campaign settings, webhook payloads,
-          comments needed to process campaigns, delivery logs, and operational
-          diagnostics.
+          PAKLAB REPLY is operated by Daybreak Ltd. (珬曙工作有限公司), Taipei, Taiwan, for the Instagram accounts of its own brands.
         </p>
       </section>
 
       <section>
-        <h2 className="text-xl font-bold text-white">How We Use Data</h2>
+        <h2 className="text-xl font-bold text-foreground">Data We Collect</h2>
         <p className="mt-3">
-          We use this data to authenticate users, connect Instagram
-          integrations, match comment keywords, send private replies through the
-          official Meta APIs, prevent duplicate sends, troubleshoot failures,
-          and protect the service.
+          For people who run the service: sign-in email addresses, workspace settings, connected Instagram account identifiers and encrypted access tokens, campaign and message settings, and operational logs.
+        </p>
+        <p className="mt-3">
+          For people who interact with a connected Instagram account: the Instagram-scoped user ID, the username when Instagram provides it, the text of comments and direct messages sent to that account, the time of the last message or comment, tags the business assigns, delivery logs of the replies sent, link clicks on tracked links (a hashed identifier, not the IP address in clear), and whether the person asked to stop automated messages.
         </p>
       </section>
 
       <section>
-        <h2 className="text-xl font-bold text-white">Instagram And Meta Data</h2>
+        <h2 className="text-xl font-bold text-foreground">How We Use Data</h2>
         <p className="mt-3">
-          OpenReply does not ask for Instagram passwords, scrape Instagram, or
-          use browser automation. Instagram tokens are encrypted at rest and are
-          used only to perform actions authorized by the connected business
-          account.
+          To match keywords and answer comments and direct messages on the business’s behalf through the official Meta APIs, to respect the 24-hour messaging window and opt-out requests, to pause automation while a staff member replies by hand, to prevent duplicate messages, to show the business its conversations and campaign results, and to keep the service secure. We do not sell data or use it for advertising.
         </p>
       </section>
 
       <section>
-        <h2 className="text-xl font-bold text-white">Subprocessors</h2>
+        <h2 className="text-xl font-bold text-foreground">Instagram And Meta Data</h2>
         <p className="mt-3">
-          The production service may use hosting, database, Redis queue, email,
-          and observability providers such as Vercel, Railway, PostgreSQL,
-          Redis, and Resend. These providers process data only as needed to run
-          the service.
+          PAKLAB REPLY never asks for Instagram passwords, does not scrape Instagram and does not use browser automation. Access tokens are encrypted at rest and used only for actions the connected business account authorized. Automated messages are sent only within 24 hours of the person’s own message; anyone can send STOP to stop them and START to turn them back on.
         </p>
       </section>
 
       <section>
-        <h2 className="text-xl font-bold text-white">Retention And Deletion</h2>
+        <h2 className="text-xl font-bold text-foreground">Service Providers</h2>
         <p className="mt-3">
-          Customers can disconnect Instagram from settings, which removes the
-          stored Instagram connection and stops campaigns. For account or data
-          deletion, follow the Data Deletion page linked from the footer.
+          Hosting, database and queue providers (Vercel, Railway, PostgreSQL, Redis) process data only to run the service.
         </p>
       </section>
 
       <section>
-        <h2 className="text-xl font-bold text-white">Contact</h2>
+        <h2 className="text-xl font-bold text-foreground">Retention And Deletion</h2>
         <p className="mt-3">
-          For privacy questions, contact the repository owner through GitHub or
-          the support email configured for the hosted OpenReply service.
+          Delivery logs and contact records are kept while the Instagram account stays connected. Disconnecting the account deletes its contacts, campaigns and logs. To have your own data deleted, follow the Data Deletion page.
         </p>
       </section>
+
+      <section>
+        <h2 className="text-xl font-bold text-foreground">Contact</h2>
+        <p className="mt-3">
+          Send a direct message to the Instagram account you interacted with, or contact Daybreak Ltd. through the business that operates that account.
+        </p>
+      </section>
+
     </LegalShell>
   );
 }

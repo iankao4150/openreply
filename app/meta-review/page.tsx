@@ -2,45 +2,35 @@ import type { Metadata } from "next";
 import LegalShell from "@/components/legal-shell";
 
 export const metadata: Metadata = {
-  title: "Meta App Review Support - OpenReply",
-  description:
-    "Meta App Review notes for OpenReply's official Instagram private reply workflow.",
+  title: "Meta App Review Support - PAKLAB REPLY",
+  description: "How PAKLAB REPLY uses Instagram messaging permissions.",
 };
 
 export default function MetaReviewPage() {
   return (
     <LegalShell
       title="Meta App Review Support"
-      description="OpenReply is designed for Instagram professional accounts that want to send private replies after keyword comments on their own posts or reels."
-      updatedAt="May 24, 2026"
+      description="How PAKLAB REPLY uses Instagram messaging permissions, for Meta App Review."
+      updatedAt="October 9, 2026"
     >
       <section>
-        <h2 className="text-xl font-bold text-white">User Flow</h2>
+        <h2 className="text-xl font-bold text-foreground">What The App Does</h2>
         <p className="mt-3">
-          A business owner signs in by email, connects an Instagram professional
-          account through Meta OAuth, creates a keyword campaign for a post or
-          reel, and receives a webhook when someone comments. OpenReply queues
-          the event, deduplicates it, checks rate limits, then sends a private
-          reply using the comment ID.
+          PAKLAB REPLY is an internal tool of Daybreak Ltd. (珬曙工作有限公司) that answers customers of its own Instagram professional account (@ofsyd.co, the OFSYD clothing brand). When someone comments a keyword on a post, it sends a private reply with product information; when someone sends a direct message with a product keyword, taps a button in one of its replies, or mentions the account in a story, it answers in that conversation; and staff read and answer conversations in its inbox.
         </p>
       </section>
 
       <section>
-        <h2 className="text-xl font-bold text-white">Compliance Position</h2>
+        <h2 className="text-xl font-bold text-foreground">How Messaging Rules Are Respected</h2>
         <p className="mt-3">
-          The app uses official Meta APIs, verifies webhook signatures, encrypts
-          tokens, avoids scraping, avoids password collection, and sends no more
-          than one private reply for a matched campaign/comment pair.
+          Replies are sent only through the official Instagram API with Facebook Login. Automated messages go out only within 24 hours of the person’s own message, comment or tap, and no message tags are used. Each comment gets at most one private reply. Anyone can send STOP to stop automated messages and START to turn them back on. Automation pauses for a conversation while a staff member is replying by hand.
         </p>
       </section>
 
       <section>
-        <h2 className="text-xl font-bold text-white">Review Test Notes</h2>
+        <h2 className="text-xl font-bold text-foreground">Review Test Notes</h2>
         <p className="mt-3">
-          Reviewers can use a Meta test business, connect an Instagram
-          professional account, create a keyword such as LINK, comment that
-          keyword on the selected media, and confirm that the private reply is
-          sent and logged once.
+          Sign in at /login with the reviewer account provided in the submission. Open DM auto-replies to see the keyword rule TEST. From any Instagram account, send TEST as a direct message to @ofsyd.co; the account replies within seconds and the reply appears in DM Logs and Inbox. Send STOP to see the opt-out confirmation and START to opt back in.
         </p>
       </section>
     </LegalShell>

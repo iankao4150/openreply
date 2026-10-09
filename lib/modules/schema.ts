@@ -10,7 +10,7 @@ export const BUTTON_LABEL_MAX = 20;
 export const MAX_QUICK_REPLIES = 13;
 export const QUICK_REPLY_TITLE_MAX = 20;
 
-export const DEFAULT_UTM_SOURCE = "openreply";
+export const DEFAULT_UTM_SOURCE = "paklab";
 export const DEFAULT_UTM_MEDIUM = "dm";
 
 /** A card button opens a link (url) or answers with another module (moduleId). */

@@ -493,7 +493,7 @@ model MessageModule {
   quickReplies     Json     @default("[]")
   // The short message the quick replies are attached to, sent after the cards.
   quickReplyPrompt String?
-  utmSource        String   @default("openreply")
+  utmSource        String   @default("paklab")
   utmMedium        String   @default("dm")
   utmCampaign      String?
   createdAt        DateTime @default(now())

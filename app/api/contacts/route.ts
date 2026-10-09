@@ -138,3 +138,31 @@ export async function PATCH(request: NextRequest) {
   if (updated.count === 0) return fail("Contact not found", 404);
   return NextResponse.json({ success: true });
 }
+
+/**
+ * DELETE ?id=: erase what we hold about one person (a data deletion request):
+ * the contact with its tags, and the logs of messages sent to them. An opt-out
+ * is kept, so a person who asked not to be messaged stays that way.
+ */
+export async function DELETE(request: NextRequest) {
+  const context = await getCurrentWorkspaceContext();
+  if (!context) return fail("Unauthorized", 401);
+  if (!canManageWorkspace(context.role)) return fail("Only owners and admins can delete contacts", 403);
+  const id = request.nextUrl.searchParams.get("id");
+  if (!id) return fail("Invalid input", 400);
+  const contact = await prisma.contact.findFirst({
+    where: { id, workspaceId: context.workspaceId },
+    select: { id: true, instagramAccountId: true, userId: true },
+  });
+  if (!contact) return fail("Contact not found", 404);
+  await prisma.$transaction([
+    prisma.dmLog.deleteMany({
+      where: { workspaceId: context.workspaceId, instagramAccountId: contact.instagramAccountId, commenterId: contact.userId },
+    }),
+    prisma.broadcastRecipient.deleteMany({
+      where: { userId: contact.userId, broadcast: { workspaceId: context.workspaceId, instagramAccountId: contact.instagramAccountId } },
+    }),
+    prisma.contact.delete({ where: { id: contact.id } }),
+  ]);
+  return NextResponse.json({ success: true });
+}

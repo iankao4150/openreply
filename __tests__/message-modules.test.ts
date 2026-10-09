@@ -57,7 +57,7 @@ const ctx = { baseUrl: "https://reply.example.com", automationId: "auto1", recip
 describe("module input validation", () => {
   it("accepts a carousel and fills the UTM defaults", () => {
     const parsed = moduleInputSchema.parse({ name: "Messi", cards: [card()] });
-    expect(parsed.utmSource).toBe("openreply");
+    expect(parsed.utmSource).toBe("paklab");
     expect(parsed.utmMedium).toBe("dm");
     expect(parsed.utmCampaign).toBeNull();
   });

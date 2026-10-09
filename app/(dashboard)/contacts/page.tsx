@@ -102,6 +102,16 @@ export default function ContactsPage() {
     return () => window.clearTimeout(timer);
   }, [load]);
 
+  async function removeContact(contact: Contact) {
+    if (!confirm(t("Delete everything stored about this person (contact, tags and message logs)? Use this when someone asks for their data to be deleted."))) return;
+    const res = await fetch(`/api/contacts?id=${contact.id}`, { method: "DELETE" });
+    const data = await res.json().catch(() => null);
+    if (data?.success) {
+      setContacts((prev) => prev.filter((c) => c.id !== contact.id));
+      setTotal((n) => Math.max(0, n - 1));
+    }
+  }
+
   async function saveTags(contact: Contact) {
     const next = tagDraft
       .split(/[,，、\n]/)
@@ -273,6 +283,12 @@ export default function ContactsPage() {
                         className="text-xs text-muted hover:text-foreground"
                       >
                         {contact.tags.length ? t("Edit tags") : t("+ Add tags")}
+                      </button>
+                      <button
+                        onClick={() => void removeContact(contact)}
+                        className="ml-auto text-xs text-muted hover:text-error"
+                      >
+                        {t("Delete data")}
                       </button>
                     </div>
                   )}

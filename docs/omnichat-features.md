@@ -1,6 +1,6 @@
-# OmniChat-style features (this fork)
+# PAKLAB REPLY features
 
-What this fork adds on top of OpenReply, how each piece behaves, and the Meta
+What PAKLAB REPLY does, how each piece behaves, and the Meta
 rules it is built around. Everything here runs on the direct Meta provider
 (Facebook Login mode, see [facebook-login.md](facebook-login.md)); Zernio
 connections fall back to plain text where noted.
