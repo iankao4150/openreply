@@ -113,7 +113,7 @@ export default function ModulePreview({
                         type="button"
                         onClick={() => onSelect?.(index)}
                         className={`flex w-full flex-col overflow-hidden rounded-2xl bg-zinc-900 outline-offset-2 ${
-                          active ? "outline outline-2 outline-accent" : "hover:outline hover:outline-1 hover:outline-zinc-600"
+                          active ? "outline outline-2 outline-white" : "hover:outline hover:outline-1 hover:outline-zinc-600"
                         }`}
                         aria-label={t("Edit card {n}", { n: index + 1 })}
                         aria-pressed={active}

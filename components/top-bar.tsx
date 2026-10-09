@@ -3,12 +3,14 @@
 /**
  * Top Bar
  *
- * Page title, mobile hamburger, and connection status.
+ * Breadcrumb with the page title, mobile menu button, and connection status.
  */
 
 import type { StaticMessageKey } from "@/lib/i18n";
 import { useI18n } from "@/lib/i18n/provider";
 import { usePathname } from "next/navigation";
+import { ChevronRight, Link2, Menu } from "lucide-react";
+import { BRAND_NAME } from "@/lib/brand";
 
 const pageTitles: Record<string, StaticMessageKey> = {
   "/dashboard": "Dashboard",
@@ -36,22 +38,22 @@ interface TopBarProps {
   instagramAccountCount: number;
 }
 
-export default function TopBar({
-  onMenuClick,
-  instagramUsername,
-  instagramAccountCount,
-}: TopBarProps) {
+export default function TopBar({ onMenuClick, instagramUsername, instagramAccountCount }: TopBarProps) {
   const { t } = useI18n();
   const pathname = usePathname();
-  const title: StaticMessageKey = pageTitles[pathname] ?? (
-    pathname.endsWith("/edit") ? "Edit campaign"
-      : pathname.startsWith("/campaigns/") ? "Campaign details"
-      : pathname.startsWith("/modules/") ? "Edit module" : "Dashboard"
-  );
+  const title: StaticMessageKey =
+    pageTitles[pathname] ??
+    (pathname.endsWith("/edit")
+      ? "Edit campaign"
+      : pathname.startsWith("/campaigns/")
+        ? "Campaign details"
+        : pathname.startsWith("/modules/")
+          ? "Edit module"
+          : "Dashboard");
 
   return (
     <header
-      className="sticky top-0 z-30 flex items-center justify-between gap-3 px-4 lg:px-8 border-b border-border bg-background"
+      className="sticky top-0 z-30 flex items-center justify-between gap-3 border-b border-border bg-background px-4 lg:px-10"
       // Installed to the home screen the app starts at the very top of the
       // display, so without this the title sits under the clock and battery.
       // The inset is 0 in a browser tab and on desktop.
@@ -60,28 +62,38 @@ export default function TopBar({
         paddingTop: "env(safe-area-inset-top)",
       }}
     >
-      <div className="flex min-w-0 items-center gap-3 sm:gap-4">
+      <div className="flex min-w-0 items-center gap-2">
         <button
           onClick={onMenuClick}
-          className="lg:hidden shrink-0 px-2.5 py-1.5 rounded border border-border text-sm text-muted hover:text-foreground"
+          className="-ml-1 flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-muted hover:bg-surface-hover hover:text-foreground lg:hidden"
           aria-label={t("Toggle sidebar")}
         >
-          {t("Menu")}
+          <Menu className="h-5 w-5" aria-hidden />
         </button>
-        <h1 className="truncate text-base font-semibold sm:text-lg">{t(title)}</h1>
+        <div className="flex min-w-0 items-center gap-1.5 text-xs text-muted">
+          <span className="hidden shrink-0 sm:inline">{BRAND_NAME}</span>
+          <ChevronRight className="hidden h-3.5 w-3.5 shrink-0 text-faint sm:inline" aria-hidden />
+          <h1 className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap text-sm font-semibold text-foreground">
+            {t(title)}
+          </h1>
+        </div>
       </div>
 
       {instagramAccountCount > 0 ? (
-        <p className="shrink-0 truncate text-sm text-muted">
-          {instagramAccountCount > 1
-            ? t("{count} accounts", { count: instagramAccountCount })
-            : `@${instagramUsername}`}
-        </p>
+        <span className="inline-flex min-w-0 max-w-[50%] shrink-0 items-center gap-1.5 rounded-full border border-border bg-surface px-2.5 py-1 text-xs text-muted">
+          <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-success" aria-hidden />
+          <span className="min-w-0 overflow-hidden text-ellipsis whitespace-nowrap">
+            {instagramAccountCount > 1
+              ? t("{count} accounts", { count: instagramAccountCount })
+              : `@${instagramUsername}`}
+          </span>
+        </span>
       ) : (
         <a
           href="/api/instagram/connect"
-          className="shrink-0 whitespace-nowrap text-sm font-medium px-3 py-1.5 rounded bg-accent text-white hover:bg-accent-hover"
+          className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-md bg-accent px-3 py-1.5 text-xs font-medium text-white hover:bg-accent-hover"
         >
+          <Link2 className="h-3.5 w-3.5" aria-hidden />
           {/* Full label needs more room than a 360px header has to spare. */}
           <span className="sm:hidden">{t("Connect")}</span>
           <span className="hidden sm:inline">{t("Connect Instagram")}</span>
